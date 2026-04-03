@@ -333,14 +333,25 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
                     </div>
                     <p class="small text-muted mb-2">可用變數：<code>{{GRADE}}</code>、<code>{{NODES}}</code>、<code>{{PDF_CONTEXT}}</code></p>
 
-                    <div class="mb-3">
-                      <div class="prompt-section-title">數學科 Prompt（架構：Level A×1 B×3 C×3 D×3）</div>
-                      <textarea id="prompt-math" class="form-control prompt-textarea" rows="6" placeholder="載入中..."></textarea>
+                    <!-- 建立任務 Prompt -->
+                    <p class="small fw-bold text-muted mb-1">🏗️ 建立任務出題（因材網分析導向）</p>
+                    <div class="mb-2">
+                      <div class="prompt-section-title">數學科 出題 Prompt（Level A×1 B×3 C×3 D×3）</div>
+                      <textarea id="prompt-math" class="form-control prompt-textarea" rows="5" placeholder="載入中..."></textarea>
                     </div>
-
+                    <div class="mb-3">
+                      <div class="prompt-section-title">國語科 出題 Prompt（Level A×1 B×4 C×5）</div>
+                      <textarea id="prompt-chinese" class="form-control prompt-textarea" rows="5" placeholder="載入中..."></textarea>
+                    </div>
+                    <!-- 差異化學習單 Prompt -->
+                    <p class="small fw-bold text-muted mb-1">📄 差異化學習單生成（層次結構補救）</p>
+                    <div class="mb-2">
+                      <div class="prompt-section-title" style="border-color:#f57c00">數學科 學習單 Prompt</div>
+                      <textarea id="prompt-math-ws" class="form-control prompt-textarea" rows="5" placeholder="載入中..."></textarea>
+                    </div>
                     <div>
-                      <div class="prompt-section-title">國語科 Prompt（架構：Level A×1 B×4 C×5）</div>
-                      <textarea id="prompt-chinese" class="form-control prompt-textarea" rows="6" placeholder="載入中..."></textarea>
+                      <div class="prompt-section-title" style="border-color:#f57c00">國語科 學習單 Prompt</div>
+                      <textarea id="prompt-chinese-ws" class="form-control prompt-textarea" rows="5" placeholder="載入中..."></textarea>
                     </div>
                   </div>
                 </div>
@@ -500,7 +511,10 @@ const API = {
   getQuestionErrorRates:    (taskName)   => callAPI('getQuestionErrorRates', { taskName }),
   analyzeClassWeakNodes:    (taskName)   => callAPI('analyzeClassWeakNodes', { taskName }),
   generateTeachingWorksheet:(nodes,g,s)  => callAPI('generateTeachingWorksheet', { topNodes:nodes, grade:g, subject:s }),
-  getSimilarQuestions:      (node,g,s,l)  => callAPI('getSimilarQuestions', { node, grade:g, subject:s, limit:l }),
+  getSimilarQuestions:          (node,g,s,l)  => callAPI('getSimilarQuestions', { node, grade:g, subject:s, limit:l }),
+  getTaskQuestions:             (taskName)    => callAPI('getTaskQuestions', { taskName }),
+  getPracticeQuestionsForErrors:(taskName)    => callAPI('getPracticeQuestionsForErrors', { taskName }),
+  updateSystemPrompts:          (m,c,mw,cw,p) => callAPI('updateSystemPrompts', { mathPrompt:m, chinesePrompt:c, mathWorksheetPrompt:mw, chineseWorksheetPrompt:cw, pwd:p }),
 };
 
 // ─── 初始化 ─────────────────────────────────────────────────
@@ -739,23 +753,80 @@ async function clearNodeBank() {
   } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
 }
 
-// ─── 後台：題庫狀態 ─────────────────────────────────────────
+// ─── 後台：題庫管理（含題目列表）────────────────────────────
+let bankCurrentTask = '';
 async function loadBankStatus() {
-  document.getElementById('bank-status').innerHTML = '<div class="spinner-border spinner-border-sm"></div> 載入中…';
+  const area = document.getElementById('bank-status');
+  area.innerHTML = '<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm"></div><span>載入中...</span></div>';
   try {
     const taskList = await API.getTasks();
-    const rows = taskList.map(t =>
-      `<tr><td>${t.taskName}</td><td>${t.grade}</td><td>${t.subject}</td><td>${t.studentCount}</td></tr>`
-    ).join('') || '<tr><td colspan="4" class="text-center text-muted">尚無任務</td></tr>';
-    document.getElementById('bank-status').innerHTML = `
-      <div class="table-responsive">
-        <table class="table table-hover table-sm">
-          <thead><tr><th>任務名稱</th><th>年級</th><th>科目</th><th>學生數</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+    if (!taskList.length) { area.innerHTML = '<p class="text-muted">尚無任務，請先建立任務並出題。</p>'; return; }
+
+    const taskOpts = '<option value="">-- 選擇任務查看題目 --</option>' +
+      taskList.map(t => '<option value="' + t.taskName + '">' + t.taskName + '（' + t.grade + ' ' + t.subject + '）</option>').join('');
+
+    area.innerHTML =
+      '<div class="row g-2 mb-3">' +
+        '<div class="col-12 col-md-6">' +
+          '<label class="form-label fw-bold">選擇任務</label>' +
+          '<select class="form-select" id="bank-task-sel" onchange="loadBankQuestions()">' + taskOpts + '</select>' +
+        '</div>' +
+      '</div>' +
+      '<div id="bank-questions-area"><p class="text-muted small">請選擇任務以檢視題目。</p></div>';
   } catch(e) {
-    document.getElementById('bank-status').innerHTML = '<div class="text-danger">載入失敗：' + e.message + '</div>';
+    area.innerHTML = '<div class="text-danger">載入失敗：' + e.message + '</div>';
+  }
+}
+
+async function loadBankQuestions() {
+  const taskName = document.getElementById('bank-task-sel').value;
+  const area     = document.getElementById('bank-questions-area');
+  if (!taskName) { area.innerHTML = '<p class="text-muted small">請選擇任務。</p>'; return; }
+  area.innerHTML = '<div class="spinner-border spinner-border-sm me-2"></div>載入題目中...';
+  try {
+    const result = await API.getTaskQuestions(taskName);
+    const qs     = result.questions || [];
+    if (!qs.length) { area.innerHTML = '<p class="text-muted">此任務尚無題目，請先執行出題。</p>'; return; }
+
+    // 依節點分組
+    const byNode = {};
+    qs.forEach(q => {
+      const nd = q.node || '未分類';
+      if (!byNode[nd]) byNode[nd] = [];
+      byNode[nd].push(q);
+    });
+
+    let html = '<p class="fw-bold mb-2">共 ' + qs.length + ' 題 | ' + Object.keys(byNode).length + ' 個知識節點</p>';
+    Object.entries(byNode).forEach(([node, nodeQs]) => {
+      const lvlColors = { A:'badge-A', B:'badge-B', C:'badge-C', D:'badge-D' };
+      html += '<div class="mb-3 border rounded p-2">' +
+        '<div class="fw-bold mb-2 d-flex align-items-center gap-2">' +
+          '<span class="text-primary">📌 ' + node + '</span>' +
+          '<span class="badge bg-secondary">' + nodeQs.length + ' 題</span>' +
+        '</div>';
+      html += '<div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead>' +
+        '<tr><th style="width:50px">層次</th><th>題目（前60字）</th><th style="width:60px">類型</th>' +
+        '<th style="width:60px">正解</th><th style="width:80px">難度</th></tr></thead><tbody>';
+      nodeQs.forEach(q => {
+        const lvlM  = (q.hint||'').match(/Level ([ABCD])/);
+        const lv    = lvlM ? lvlM[1] : '?';
+        const lvBadge = lv !== '?' ? '<span class="badge ' + (lvlColors[lv]||'bg-secondary') + '">' + lv + '</span>' : '–';
+        const diffLabel = { easy:'基礎', medium:'中等', hard:'進階' }[q.difficulty] || q.difficulty;
+        const optStr = (q.options||[]).map((o,i) => ['A','B','C','D'][i] + '.' + o).join('　');
+        html += '<tr>' +
+          '<td>' + lvBadge + '</td>' +
+          '<td><div class="small">' + String(q.text||'').substring(0,60) + '…</div>' +
+              '<div class="text-muted" style="font-size:.72rem">' + optStr.substring(0,80) + '</div></td>' +
+          '<td><span class="badge bg-light text-dark border">' + (q.type==='fill'?'填充':'選擇') + '</span></td>' +
+          '<td><strong>' + String(q.answer||'').toUpperCase() + '</strong></td>' +
+          '<td><span class="text-muted small">' + diffLabel + '</span></td>' +
+        '</tr>';
+      });
+      html += '</tbody></table></div></div>';
+    });
+    area.innerHTML = html;
+  } catch(e) {
+    area.innerHTML = '<div class="text-danger">載入失敗：' + e.message + '</div>';
   }
 }
 
@@ -834,26 +905,51 @@ async function loadResults() {
   } catch(e) { area.innerHTML = '<div class="text-danger">' + e.message + '</div>'; }
 }
 
-// ─── 取得類似題 ──────────────────────────────────────────────
+// ─── 取得答錯題目的練習題（精準對應答錯節點）────────────────
 async function loadSimilarQ(taskName) {
+  const btn = document.querySelector('[onclick*="loadSimilarQ"]');
+  if (btn) { btn.disabled = true; btn.textContent = '載入中...'; }
   try {
-    const nodes = await API.analyzeClassWeakNodes(taskName);
-    const top3  = nodes.slice(0,3).map(n => n.node);
-    const task  = tasks.find(t => t.taskName === taskName);
-    let html = '<hr><h6 class="fw-bold">📚 類似題（各弱點節點取 3 題，供教師課堂討論）</h6>';
-    for (const node of top3) {
-      const qs = await API.getSimilarQuestions(node, task?.grade||'', task?.subject||'', 3);
-      html += '<div class="mb-3 p-3 bg-light rounded"><strong>節點：' + node + '</strong><ol class="mt-2">';
-      qs.forEach(q => {
-        const optStr = (q.options||[]).map((o,i) => ['A','B','C','D'][i] + '.' + o).join('　');
-        html += '<li class="mb-2"><div>' + q.text + '</div>' +
-                '<div class="text-muted small">選項：' + optStr + '　正解：<strong>' + String(q.answer).toUpperCase() + '</strong></div>' +
-                '<div class="text-muted small">解析：' + (q.hint||'').replace(/\[Level [ABCD]\]\s*/,'') + '</div></li>';
-      });
-      html += '</ol></div>';
+    const practiceSet = await API.getPracticeQuestionsForErrors(taskName);
+    if (!practiceSet || !practiceSet.length) {
+      Swal.fire('提示', '找不到對應的練習題，請確認題庫已有足夠題目。', 'info');
+      return;
     }
+    let html = '<hr><h5 class="fw-bold mt-2">📚 答錯節點練習題（各節點 3 題，供教師課堂討論用）</h5>' +
+               '<p class="text-muted small">依學生作答錯誤率排序，排除已答錯的原題，提供同節點不同題目。</p>';
+    practiceSet.forEach(item => {
+      html += '<div class="mb-4 card p-3">' +
+        '<h6 class="fw-bold text-primary mb-1">📌 ' + item.node + ' <span class="badge bg-danger ms-1">答錯 ' + item.errorCount + ' 次</span></h6>';
+      if (!item.questions.length) {
+        html += '<p class="text-muted small">題庫中無可用練習題，請增加題目。</p>';
+      } else {
+        item.questions.forEach((q, qi) => {
+          const diffColor = q.difficulty==='hard'?'text-danger':q.difficulty==='medium'?'text-warning':'text-success';
+          const optStr = (q.options||[]).map((o,i) => '<span class="me-2"><strong>' + ['A','B','C','D'][i] + '.</strong>' + o + '</span>').join('');
+          html += '<div class="border rounded p-2 mb-2">' +
+            '<div class="d-flex gap-2 align-items-start mb-1">' +
+              '<span class="badge bg-secondary">Q' + (qi+1) + '</span>' +
+              '<span class="small ' + diffColor + '">[' + (q.difficulty||'–') + ']</span>' +
+            '</div>' +
+            '<div class="mb-1">' + q.text + '</div>' +
+            '<div class="text-muted small mb-1">' + optStr + '</div>' +
+            '<details><summary class="small text-muted" style="cursor:pointer">▶ 查看解答</summary>' +
+              '<div class="mt-1 p-2 bg-light rounded small">' +
+                '<strong>正解：' + String(q.answer||'').toUpperCase() + '</strong>' +
+                (q.hint ? '　解析：' + q.hint : '') +
+              '</div>' +
+            '</details>' +
+          '</div>';
+        });
+      }
+      html += '</div>';
+    });
     document.getElementById('results-area').insertAdjacentHTML('beforeend', html);
-  } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
+  } catch(e) {
+    Swal.fire('錯誤', e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '📖 查看類似題（教師討論用）'; }
+  }
 }
 
 // ─── 後台：差異化分析 ────────────────────────────────────────
@@ -926,14 +1022,29 @@ async function genWorksheet() {
   const nodes = JSON.parse(area.dataset.nodes || '[]');
   const task  = tasks.find(t => t.taskName === document.getElementById('analysis-task').value);
   if (!nodes.length) return;
-  Swal.fire({ title:'AI 生成學習單中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+  Swal.fire({
+    title: 'AI 生成差異化學習單',
+    html: '正在生成中，最多嘗試 3 種模型…<br><small class="text-muted">若出現配額錯誤會自動切換備援模型</small>',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
   try {
     const html = await API.generateTeachingWorksheet(nodes, task?.grade || '', task?.subject || '');
     Swal.close();
     const win = window.open('', '_blank');
+    if (!win) { Swal.fire('提示', '請允許彈出視窗以查看學習單', 'info'); return; }
     win.document.write(html);
     win.document.close();
-  } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
+  } catch(e) {
+    const isQuota = e.message.includes('配額') || e.message.includes('quota');
+    Swal.fire({
+      icon: 'error',
+      title: isQuota ? '⏳ API 配額已滿' : '生成失敗',
+      html: isQuota
+        ? '<p>' + e.message + '</p><p class="text-muted small mt-2">建議：等待約 1 分鐘後重試，或至 Google AI Studio 確認配額狀態。</p>'
+        : e.message
+    });
+  }
 }
 
 // ─── 後台：設定 ─────────────────────────────────────────────
@@ -942,10 +1053,14 @@ async function loadSettingsTab() {
     const [settings, folderId, prompts] = await Promise.all([
       API.getQuizSettings(), API.getFolderId(), API.getSystemPrompts()
     ]);
-    document.getElementById('setting-quiz-count').value = settings.quizCount;
-    document.getElementById('setting-folder-id').value  = folderId;
-    document.getElementById('prompt-math').value         = prompts.mathPrompt;
-    document.getElementById('prompt-chinese').value      = prompts.chinesePrompt;
+    document.getElementById('setting-quiz-count').value         = settings.quizCount;
+    document.getElementById('setting-folder-id').value          = folderId;
+    document.getElementById('prompt-math').value                = prompts.mathPrompt;
+    document.getElementById('prompt-chinese').value             = prompts.chinesePrompt;
+    const mws = document.getElementById('prompt-math-ws');
+    const cws = document.getElementById('prompt-chinese-ws');
+    if (mws) mws.value = prompts.mathWorksheetPrompt   || '';
+    if (cws) cws.value = prompts.chineseWorksheetPrompt|| '';
   } catch(e) { console.error('設定載入失敗', e); }
 }
 
@@ -964,6 +1079,8 @@ async function saveFolderId() {
 async function verifyAndSavePrompts() {
   const mathP    = document.getElementById('prompt-math').value.trim();
   const chineseP = document.getElementById('prompt-chinese').value.trim();
+  const mathWS   = (document.getElementById('prompt-math-ws')    ||{}).value?.trim()||'';
+  const chineseWS= (document.getElementById('prompt-chinese-ws') ||{}).value?.trim()||'';
   const { value: password } = await Swal.fire({
     title:'需要管理員驗證', input:'password', inputPlaceholder:'請輸入密碼',
     showCancelButton:true, confirmButtonText:'驗證並儲存', cancelButtonText:'取消'
@@ -971,7 +1088,7 @@ async function verifyAndSavePrompts() {
   if (!password) return;
   Swal.fire({ title:'儲存中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
   try {
-    const msg = await API.updateSystemPrompts(mathP, chineseP, password);
+    const msg = await API.updateSystemPrompts(mathP, chineseP, mathWS, chineseWS, password);
     Swal.fire('成功', msg, 'success');
   } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
 }
