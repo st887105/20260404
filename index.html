@@ -73,7 +73,7 @@
 
 <!-- GAS Web App URL -->
 <script>
-const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvgu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvqu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
 </script>
 
 <!-- ===================== HEADER ===================== -->
@@ -108,10 +108,7 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
           </select>
         </div>
 
-        <div class="mb-4">
-          <label class="form-label fw-bold">姓名確認</label>
-          <input id="login-name" type="text" class="form-control" placeholder="請選擇座號後自動帶入" readonly>
-        </div>
+
 
         <button class="btn btn-primary btn-lg w-100" onclick="studentLogin()">
           <i class="fa-solid fa-play me-2"></i>開始測驗
@@ -429,6 +426,29 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
 <script>
 // ─── 全域狀態 ───────────────────────────────────────────────
 let GAS_URL   = DEFAULT_GAS_URL;
+
+// ─── 工具：去識別化 ─────────────────────────────────────────
+function anonymizeName(name) {
+  const s = String(name || '').trim();
+  if (!s) return s;
+  if (s.length === 1) return s;
+  if (s.length === 2) return s[0] + 'O';
+  // 3字以上：保留首尾，中間全改 O
+  return s[0] + 'O'.repeat(s.length - 2) + s[s.length - 1];
+}
+
+// 去識別化學生顯示用（處理 "6年 3班 10號 廖潘吉慶" 格式）
+function anonymizeStudentLabel(student) {
+  const num  = String(student.number || '');
+  const name = String(student.name   || '');
+  // 若 number 欄含名字（以「號」為分界），則只顯示號碼，名字去識別化後加上
+  const m = num.match(/^(.+號)\s*(.+)$/);
+  if (m) {
+    return m[1] + ' ' + anonymizeName(m[2]);
+  }
+  // 否則 number 就是代號，name 去識別化
+  return name ? (num + ' ' + anonymizeName(name)) : num;
+}
 let students  = [];          // 當前任務學生清單
 let tasks     = [];          // 任務清單
 let parsedExcelData = null;  // 解析後 Excel 資料
@@ -437,6 +457,7 @@ let currentTask    = null;   // 登入任務
 
 // 測驗狀態
 let quizQuestions = [];
+let currentStudentTemp = null;  // 臨時儲存號碼選擇後的學生
 let quizIndex     = 0;
 let quizAnswers   = [];
 let quizStartTime = 0;
@@ -479,6 +500,7 @@ const API = {
   getQuestionErrorRates:    (taskName)   => callAPI('getQuestionErrorRates', { taskName }),
   analyzeClassWeakNodes:    (taskName)   => callAPI('analyzeClassWeakNodes', { taskName }),
   generateTeachingWorksheet:(nodes,g,s)  => callAPI('generateTeachingWorksheet', { topNodes:nodes, grade:g, subject:s }),
+  getSimilarQuestions:      (node,g,s,l)  => callAPI('getSimilarQuestions', { node, grade:g, subject:s, limit:l }),
 };
 
 // ─── 初始化 ─────────────────────────────────────────────────
@@ -505,29 +527,31 @@ async function onTaskChange() {
   const taskName = document.getElementById('login-task').value;
   const numSel   = document.getElementById('login-number');
   numSel.innerHTML = '<option value="">載入中...</option>';
-  document.getElementById('login-name').value = '';
+  // (姓名確認欄已移除)
   if (!taskName) return;
 
   try {
     students = await API.getStudents(taskName);
     numSel.innerHTML = '<option value="">-- 請選擇座號 --</option>' +
-      students.map(s => `<option value="${s.number}">${s.number} 號</option>`).join('');
+      students.map(s => {
+        const label = anonymizeStudentLabel(s);
+        return '<option value="' + s.number + '">' + label + '</option>';
+      }).join('');
   } catch(e) {
     numSel.innerHTML = '<option value="">載入失敗</option>';
   }
 }
 
 function onNumberChange() {
+  // 座號選擇後自動帶入（已移除姓名確認欄）
   const num = document.getElementById('login-number').value;
-  const stu = students.find(s => s.number === num);
-  document.getElementById('login-name').value = stu ? stu.name : '';
+  currentStudentTemp = students.find(s => s.number === num) || null;
 }
 
 async function studentLogin() {
   const taskName = document.getElementById('login-task').value;
   const number   = document.getElementById('login-number').value;
-  const name     = document.getElementById('login-name').value.trim();
-  if (!taskName || !number || !name) { Swal.fire('提示','請完整選擇任務、座號！','warning'); return; }
+  if (!taskName || !number) { Swal.fire('提示','請選擇任務與座號！','warning'); return; }
 
   currentStudent = students.find(s => s.number === number);
   currentTask    = tasks.find(t => t.taskName === taskName);
@@ -740,23 +764,96 @@ async function loadResults() {
   const taskName = document.getElementById('results-task').value;
   if (!taskName) return;
   const area = document.getElementById('results-area');
-  area.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+  area.innerHTML = '<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm"></div><span>載入中...</span></div>';
   try {
-    const results = await API.getTaskResults(taskName);
+    const [results, errorRates] = await Promise.all([
+      API.getTaskResults(taskName),
+      API.getQuestionErrorRates(taskName)
+    ]);
     if (!results.length) { area.innerHTML = '<p class="text-muted">尚無成績資料</p>'; return; }
-    const rows = results.map(r =>
-      `<tr><td>${r.number}</td><td>${r.name}</td><td><strong>${r.score}分</strong></td><td>${Math.round(r.elapsed/60)}分鐘</td><td>${r.time}</td></tr>`
-    ).join('');
-    const avg = Math.round(results.reduce((s,r)=>s+r.score,0)/results.length);
-    area.innerHTML = `
-      <p class="fw-bold">共 ${results.length} 人作答，平均分數：<span class="text-primary">${avg} 分</span></p>
-      <div class="table-responsive">
-        <table class="table table-hover table-sm">
-          <thead><tr><th>座號</th><th>姓名</th><th>分數</th><th>作答時間</th><th>提交時間</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+
+    // ── 統計摘要 ──
+    const avg   = Math.round(results.reduce((s,r) => s + r.score, 0) / results.length);
+    const pass  = results.filter(r => r.score >= 60).length;
+    const top   = Math.max(...results.map(r => r.score));
+    const low   = Math.min(...results.map(r => r.score));
+
+    // ── 學生成績表（去識別化）──
+    const stuRows = results.map(r => {
+      const anonNum = r.number ? r.number.replace(/號\s*(.+)$/, (m, n) => '號 ' + anonymizeName(n)) : r.number;
+      const scoreClass = r.score >= 80 ? 'text-success fw-bold' : r.score >= 60 ? 'text-warning fw-bold' : 'text-danger fw-bold';
+      // 統計該生各節點對錯
+      const nodeErr = {};
+      (r.details || []).forEach(d => {
+        const nd = d.node || '?';
+        if (!nodeErr[nd]) nodeErr[nd] = { ok:0, fail:0 };
+        d.correct ? nodeErr[nd].ok++ : nodeErr[nd].fail++;
+      });
+      const nodeTags = Object.entries(nodeErr).map(([nd, v]) =>
+        '<span class="badge ' + (v.fail > v.ok ? 'bg-danger' : 'bg-success') + ' me-1" style="font-size:.7rem">' + nd.substring(0,8) + '</span>'
+      ).join('');
+      return '<tr><td>' + anonNum + '</td>' +
+             '<td class="' + scoreClass + '">' + r.score + ' 分</td>' +
+             '<td>' + Math.floor(r.elapsed/60) + '分' + (r.elapsed%60) + '秒</td>' +
+             '<td>' + nodeTags + '</td>' +
+             '<td class="text-muted small">' + String(r.time).substring(0,16) + '</td></tr>';
+    }).join('');
+
+    // ── 題目錯誤率排名 ──
+    const errRows = errorRates.slice(0, 10).map(e => {
+      const rate = e.errorRate;
+      const color = rate >= 70 ? 'bg-danger' : rate >= 40 ? 'bg-warning text-dark' : 'bg-success';
+      return '<tr><td class="small">' + (e.node || '–') + '</td>' +
+             '<td class="small" style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (e.question||'').substring(0,30) + '…</td>' +
+             '<td>' + e.total + '</td><td>' + e.wrong + '</td>' +
+             '<td><span class="badge ' + color + '">' + rate + '%</span></td></tr>';
+    }).join('');
+
+    area.innerHTML =
+      // 摘要卡
+      '<div class="row g-2 mb-3">' +
+        '<div class="col-6 col-md-3"><div class="card text-center p-2"><div class="fs-4 fw-bold text-primary">' + avg + '</div><div class="small text-muted">平均分</div></div></div>' +
+        '<div class="col-6 col-md-3"><div class="card text-center p-2"><div class="fs-4 fw-bold text-success">' + pass + '</div><div class="small text-muted">及格人數(≥60)</div></div></div>' +
+        '<div class="col-6 col-md-3"><div class="card text-center p-2"><div class="fs-4 fw-bold text-info">' + top + '</div><div class="small text-muted">最高分</div></div></div>' +
+        '<div class="col-6 col-md-3"><div class="card text-center p-2"><div class="fs-4 fw-bold text-danger">' + low + '</div><div class="small text-muted">最低分</div></div></div>' +
+      '</div>' +
+      // 學生成績表
+      '<h6 class="fw-bold">📋 學生成績（去識別化）</h6>' +
+      '<div class="table-responsive mb-3"><table class="table table-hover table-sm">' +
+        '<thead><tr><th>座號</th><th>分數</th><th>作答時間</th><th>節點對錯</th><th>提交時間</th></tr></thead>' +
+        '<tbody>' + stuRows + '</tbody>' +
+      '</table></div>' +
+      // 錯誤率排名
+      (errRows ? '<h6 class="fw-bold">⚠️ 題目錯誤率排名（教師重點檢討）</h6>' +
+      '<div class="table-responsive"><table class="table table-sm table-hover">' +
+        '<thead><tr><th>節點</th><th>題目（前30字）</th><th>作答數</th><th>錯誤數</th><th>錯誤率</th></tr></thead>' +
+        '<tbody>' + errRows + '</tbody>' +
+      '</table></div>' +
+      '<button class="btn btn-sm btn-outline-primary mt-2" onclick="loadSimilarQ(\'' + taskName + '\')">📖 查看類似題（教師討論用）</button>'
+      : '');
   } catch(e) { area.innerHTML = '<div class="text-danger">' + e.message + '</div>'; }
+}
+
+// ─── 取得類似題 ──────────────────────────────────────────────
+async function loadSimilarQ(taskName) {
+  try {
+    const nodes = await API.analyzeClassWeakNodes(taskName);
+    const top3  = nodes.slice(0,3).map(n => n.node);
+    const task  = tasks.find(t => t.taskName === taskName);
+    let html = '<hr><h6 class="fw-bold">📚 類似題（各弱點節點取 3 題，供教師課堂討論）</h6>';
+    for (const node of top3) {
+      const qs = await API.getSimilarQuestions(node, task?.grade||'', task?.subject||'', 3);
+      html += '<div class="mb-3 p-3 bg-light rounded"><strong>節點：' + node + '</strong><ol class="mt-2">';
+      qs.forEach(q => {
+        const optStr = (q.options||[]).map((o,i) => ['A','B','C','D'][i] + '.' + o).join('　');
+        html += '<li class="mb-2"><div>' + q.text + '</div>' +
+                '<div class="text-muted small">選項：' + optStr + '　正解：<strong>' + String(q.answer).toUpperCase() + '</strong></div>' +
+                '<div class="text-muted small">解析：' + (q.hint||'').replace(/\[Level [ABCD]\]\s*/,'') + '</div></li>';
+      });
+      html += '</ol></div>';
+    }
+    document.getElementById('results-area').insertAdjacentHTML('beforeend', html);
+  } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
 }
 
 // ─── 後台：差異化分析 ────────────────────────────────────────
@@ -764,22 +861,59 @@ async function loadAnalysis() {
   const taskName = document.getElementById('analysis-task').value;
   if (!taskName) return;
   const area = document.getElementById('analysis-area');
-  area.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+  area.innerHTML = '<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm"></div><span>分析中...</span></div>';
   try {
     const nodes = await API.analyzeClassWeakNodes(taskName);
-    if (!nodes.length) { area.innerHTML = '<p class="text-muted">尚無分析資料</p>'; return; }
-    const rows = nodes.map(n =>
-      `<tr><td>${n.node}</td><td>${n.total}</td><td>${n.wrong}</td>
-       <td><span class="badge ${n.errorRate>=70?'bg-danger':n.errorRate>=40?'bg-warning text-dark':'bg-success'}">${n.errorRate}%</span></td></tr>`
-    ).join('');
-    area.innerHTML = `
-      <p class="fw-bold">班級弱點節點（錯誤率排名 Top 10）</p>
-      <div class="table-responsive">
-        <table class="table table-sm table-hover">
-          <thead><tr><th>知識節點</th><th>作答次數</th><th>錯誤次數</th><th>錯誤率</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+    if (!nodes.length) { area.innerHTML = '<p class="text-muted">尚無分析資料（需先有學生作答記錄）</p>'; return; }
+
+    // ── 節點總表 ──
+    const mainRows = nodes.map(n => {
+      const rate  = n.errorRate;
+      const color = rate >= 70 ? 'bg-danger' : rate >= 40 ? 'bg-warning text-dark' : 'bg-success';
+      const bar   = '<div class="progress" style="height:6px;min-width:80px"><div class="progress-bar ' + color + '" style="width:' + rate + '%"></div></div>';
+
+      // ── 層次分解列 ──
+      const lvlCols = ['A','B','C','D'].map(lv => {
+        const ls = (n.levelStats || []).find(l => l.level === lv);
+        if (!ls || ls.total === 0) return '<td class="text-center text-muted small">–</td>';
+        const lc = ls.errorRate >= 70 ? 'text-danger' : ls.errorRate >= 40 ? 'text-warning' : 'text-success';
+        return '<td class="text-center small ' + lc + ' fw-bold">' + ls.errorRate + '%<br><span class="text-muted fw-normal">(' + ls.wrong + '/' + ls.total + ')</span></td>';
+      }).join('');
+
+      return '<tr>' +
+        '<td class="fw-bold">' + n.node + '</td>' +
+        '<td>' + n.total + '</td>' +
+        '<td>' + n.wrong + '</td>' +
+        '<td><span class="badge ' + color + '">' + rate + '%</span>' + bar + '</td>' +
+        lvlCols +
+      '</tr>';
+    }).join('');
+
+    area.innerHTML =
+      '<h6 class="fw-bold mb-2">🔍 班級弱點節點分析（Top 10）</h6>' +
+      '<p class="text-muted small mb-2">依各難度層次（Level A~D）拆解錯誤率，方便教師差異化指導</p>' +
+      '<div class="table-responsive">' +
+        '<table class="table table-sm table-hover align-middle">' +
+          '<thead class="table-light">' +
+            '<tr>' +
+              '<th>知識節點</th><th>總答題次</th><th>錯誤次</th><th>總錯誤率</th>' +
+              '<th class="text-center"><span class="badge badge-A px-2">A 應用</span></th>' +
+              '<th class="text-center"><span class="badge badge-B px-2">B 變數</span></th>' +
+              '<th class="text-center"><span class="badge badge-C px-2">C 拆解</span></th>' +
+              '<th class="text-center"><span class="badge badge-D px-2">D 基礎</span></th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' + mainRows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+      // 建議說明
+      '<div class="alert alert-info mt-2 small">' +
+        '<strong>差異化教學建議：</strong>' +
+        'D 層（基礎）錯誤率高 → 需全班複習基本概念；' +
+        'C 層（拆解）高 → 加強解題步驟練習；' +
+        'A 層（應用）高但 D 層低 → 僅需針對高層次學生加深延伸。' +
+      '</div>';
+
     // 顯示學習單按鈕
     document.getElementById('worksheet-area').style.display = '';
     document.getElementById('worksheet-area').dataset.nodes = JSON.stringify(nodes.slice(0,5).map(n=>n.node));
@@ -849,8 +983,8 @@ function startQuiz() {
   quizStartTime = Date.now();
   showView('quiz');
 
-  document.getElementById('quiz-student-label').textContent =
-    `${currentStudent.number} 號 ${currentStudent.name}`;
+  // 顯示去識別化後的學生標籤
+  document.getElementById('quiz-student-label').textContent = anonymizeStudentLabel(currentStudent);
 
   startTimer();
   renderQuestion();
@@ -901,17 +1035,25 @@ function renderQuestion() {
     optEl.appendChild(inp);
   } else {
     const prefixes = ['A','B','C','D'];
-    (q.options || []).forEach((opt, idx) => {
-      const btn = document.createElement('button');
-      btn.className = 'option-btn';
-      btn.innerHTML = `<span class="option-prefix">${prefixes[idx] || idx+1}</span><span>${opt}</span>`;
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        document.getElementById('next-btn').disabled = false;
+    const opts = q.options || [];
+    // ★ 防呆：若選項只有 A/B/C/D 字母（舊格式 Bank 資料），顯示警告
+    const isBadData = opts.length > 0 && opts.every(o => /^[A-Da-d]$/.test(String(o).trim()));
+    if (isBadData) {
+      optEl.innerHTML = '<div class="alert alert-warning">⚠️ 此題選項資料有誤（舊格式）。請教師清空題庫重新出題。</div>';
+      document.getElementById('next-btn').disabled = false;
+    } else {
+      opts.forEach((opt, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.innerHTML = '<span class="option-prefix">' + (prefixes[idx] || (idx+1)) + '</span><span>' + opt + '</span>';
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          document.getElementById('next-btn').disabled = false;
+        });
+        optEl.appendChild(btn);
       });
-      optEl.appendChild(btn);
-    });
+    }
   }
 
   // KaTeX 渲染
@@ -966,7 +1108,8 @@ function nextQuestion() {
   }
 
   function proceed() {
-    quizAnswers.push({ node:q.node, text:q.text, userAnswer, correct });
+    const qLevel = (q.hint && q.hint.match(/Level ([ABCD])/)) ? q.hint.match(/Level ([ABCD])/)[1] : '';
+    quizAnswers.push({ node:q.node, text:q.text, userAnswer, correct, level:qLevel, hint:q.hint||'' });
     quizIndex++;
     if (quizIndex >= quizQuestions.length) {
       finishQuiz();
@@ -987,15 +1130,29 @@ async function finishQuiz() {
   const score   = Math.round((correct / quizAnswers.length) * 100);
 
   showView('result');
-  document.getElementById('result-name').textContent    = `${currentStudent.number} 號 ${currentStudent.name}`;
+  document.getElementById('result-name').textContent    = anonymizeStudentLabel(currentStudent);
   document.getElementById('result-score').textContent   = score + ' 分';
-  document.getElementById('result-detail').textContent  =
-    `答對 ${correct} / ${quizAnswers.length} 題，用時 ${Math.floor(elapsed/60)} 分 ${elapsed%60} 秒`;
+  document.getElementById('result-detail').textContent  = '答對 ' + correct + ' / ' + quizAnswers.length + ' 題，用時 ' + Math.floor(elapsed/60) + ' 分 ' + (elapsed%60) + ' 秒';
 
-  // 弱點節點
+  // 弱點節點 + 層次分析
   const wrongNodes = [...new Set(quizAnswers.filter(a=>!a.correct).map(a=>a.node).filter(n=>n))];
+  // 各層次統計
+  const lvlStats = {};
+  quizAnswers.forEach(a => {
+    const lv = a.level || '?';
+    if (!lvlStats[lv]) lvlStats[lv] = { total:0, wrong:0 };
+    lvlStats[lv].total++;
+    if (!a.correct) lvlStats[lv].wrong++;
+  });
+  const lvlHtml = Object.entries(lvlStats).filter(([lv]) => lv !== '?').map(([lv, v]) => {
+    const color = v.wrong/v.total >= 0.5 ? '#d32f2f' : '#388e3c';
+    return '<span class="badge me-1" style="background:' + color + '">Level ' + lv + '：' + (v.total - v.wrong) + '/' + v.total + ' 答對</span>';
+  }).join('');
+
   document.getElementById('result-weak-nodes').innerHTML = wrongNodes.length
-    ? '<p class="fw-bold mb-1">建議加強：</p>' + wrongNodes.map(n=>`<span class="weak-node-badge">${n}</span>`).join('')
+    ? '<p class="fw-bold mb-1">建議加強節點：</p>' +
+      wrongNodes.map(n => '<span class="weak-node-badge">' + n + '</span>').join('') +
+      (lvlHtml ? '<p class="fw-bold mt-2 mb-1">各難度層次表現：</p>' + lvlHtml : '')
     : '<span class="text-success fw-bold">🎉 全部答對，表現優秀！</span>';
 
   // 提交結果
