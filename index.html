@@ -444,11 +444,14 @@ let timerInterval = null;
 
 // ─── API 層 ─────────────────────────────────────────────────
 async function callAPI(action, data = {}) {
+  // ★ 使用 text/plain 避免 CORS 預檢 (OPTIONS)
+  // GAS doPost 的 e.postData.contents 仍可正常讀取 JSON 字串
   const resp = await fetch(GAS_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action, data })
   });
+  if (!resp.ok) throw new Error('HTTP 錯誤：' + resp.status);
   const json = await resp.json();
   if (json.status === 'error') throw new Error(json.message || '未知錯誤');
   return json.data;
@@ -493,7 +496,7 @@ async function loadTasks() {
     sel.innerHTML = '<option value="">-- 請選擇任務 --</option>' +
       tasks.map(t => `<option value="${t.taskName}">${t.taskName}（${t.grade} ${t.subject}）</option>`).join('');
   } catch(e) {
-    document.getElementById('login-task').innerHTML = '<option value="">無法載入，請確認 GAS URL</option>';
+    document.getElementById('login-task').innerHTML = '<option value="">無法連線，請確認 GAS 部署設定</option>'; console.error('loadTasks:', e);
   }
 }
 
