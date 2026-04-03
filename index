@@ -1,1 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v7.0)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.5/dist/signature_pad.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- ★ 引入 KaTeX 數學公式渲染引擎 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
 
+  <style>
+    /* ... 保留原有 CSS 樣式 ... */
+    :root { --primary:#1e88e5; --primary-dark:#1565c0; --bg:#f0f4f8; }
+    body { background:var(--bg); font-family:'Segoe UI','Noto Sans TC',sans-serif; display:flex; flex-direction:column; min-height:100vh; }
+    main { flex:1; }
+    .app-header { background:linear-gradient(135deg,var(--primary),var(--primary-dark)); color:#fff; padding:18px 0; box-shadow:0 4px 8px rgba(0,0,0,.15); margin-bottom:28px; }
+    .card { border-radius:16px; border:none; box-shadow:0 6px 18px rgba(0,0,0,.07); }
+    .login-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,500px)); justify-content:center; gap:1.2rem; }
+    .option-btn { display:flex; align-items:flex-start; width:100%; padding:14px 18px; margin-bottom:10px; border:2px solid #e0e0e0; border-radius:12px; background:#fff; text-align:left; font-size:1rem; cursor:pointer; transition:all .2s; }
+    .option-btn.selected { background:#e3f2fd; border-color:var(--primary); font-weight:bold; color:var(--primary-dark); }
+    .option-prefix { display:inline-flex; align-items:center; justify-content:center; min-width:28px; height:28px; border-radius:50%; background:#e0e0e0; font-weight:bold; margin-right:10px; font-size:.85rem; flex-shrink:0; }
+    .option-btn.selected .option-prefix { background:var(--primary); color:#fff; }
+    .fill-input { border:2px solid #e0e0e0; border-radius:12px; padding:14px 18px; width:100%; font-size:1rem; transition:border-color .2s; }
+    
+    /* 針對 Prompt 編輯器的樣式 */
+    .prompt-textarea { font-family: 'Courier New', Courier, monospace; font-size: 0.9rem; border-radius: 8px; border: 1px solid #ced4da; }
+    .prompt-section-title { font-size: 0.95rem; font-weight: bold; color: #495057; margin-bottom: 8px; border-left: 4px solid var(--primary); padding-left: 8px; }
+  </style>
+</head>
+<body>
+
+<script>
+  // 替換為你的 GAS Web App URL
+  const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvgu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
+</script>
+
+<header class="app-header">
+  <div class="container text-center">
+    <h2><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
+    <p>階梯式出題架構 (Math 1-3-3-3 / Chinese 1-4-5) ｜ KaTeX 支援</p>
+  </div>
+</header>
+
+<main class="container-fluid px-3 px-md-4">
+  <!-- 登入畫面 (同原版，略) -->
+  <div id="view-login">...請保留原有的登入畫面 HTML...</div>
+
+  <!-- 教師管理儀表板 -->
+  <div id="view-admin" style="display:none;">
+    <div class="row justify-content-center">
+      <div class="col-12 col-xl-11">
+        <div class="card p-3 p-md-4">
+          <!-- 導覽列 -->
+          <ul class="nav nav-tabs mb-3 flex-nowrap overflow-auto">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-upload">建立任務</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-results">成績</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analysis">差異化分析</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-settings" onclick="loadSettingsTab()">設定</button></li>
+          </ul>
+
+          <div class="tab-content">
+            <!-- 建立任務、成績、分析 面板保留原狀... -->
+            
+            <!-- ★ 設定面板 (新增 Prompt 管理) -->
+            <div class="tab-pane fade" id="tab-settings">
+              <div class="row g-4">
+                <!-- 左側：基本設定 -->
+                <div class="col-12 col-lg-6">
+                  <div class="card bg-light p-3 h-100">
+                    <h6 class="fw-bold mb-3"><i class="fa-solid fa-sliders me-1"></i>基本系統設定</h6>
+                    <div class="mb-3">
+                      <label class="form-label text-muted small fw-bold">學生測驗題數</label>
+                      <div class="input-group">
+                        <input type="number" id="setting-quiz-count" class="form-control" value="10">
+                        <button class="btn btn-primary" onclick="saveSettings()">儲存</button>
+                      </div>
+                    </div>
+                    <div class="mb-3">
+                      <label class="form-label text-muted small fw-bold">PDF 教材資料夾 ID</label>
+                      <div class="input-group">
+                        <input type="text" id="setting-folder-id" class="form-control">
+                        <button class="btn btn-warning" onclick="saveFolderId()">儲存同步</button>
+                      </div>
+                    </div>
+                    <hr>
+                    <button class="btn btn-outline-danger w-100" onclick="API.clearBankCache().then(m=>Swal.fire('完成',m,'success'))">清除題庫快取</button>
+                  </div>
+                </div>
+
+                <!-- 右側：AI Prompt 設定 -->
+                <div class="col-12 col-lg-6">
+                  <div class="card bg-light p-3 h-100 border-primary">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                      <h6 class="fw-bold text-primary mb-0"><i class="fa-solid fa-robot me-1"></i>AI 提示詞 (Prompt) 管理</h6>
+                      <button class="btn btn-sm btn-success" onclick="verifyAndSavePrompts()"><i class="fa-solid fa-floppy-disk me-1"></i>儲存修改</button>
+                    </div>
+                    <p class="small text-muted mb-2">支援變數：<code>{{GRADE}}</code>, <code>{{NODES}}</code>, <code>{{PDF_CONTEXT}}</code></p>
+                    
+                    <div class="mb-3">
+                      <div class="prompt-section-title">數學科 Prompt (1-3-3-3 架構)</div>
+                      <textarea id="prompt-math" class="form-control prompt-textarea" rows="6" placeholder="載入中..."></textarea>
+                    </div>
+                    
+                    <div class="mb-2">
+                      <div class="prompt-section-title">國語科 Prompt (1-4-5 架構)</div>
+                      <textarea id="prompt-chinese" class="form-control prompt-textarea" rows="6" placeholder="載入中..."></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 作答畫面 -->
+  <div id="view-quiz" style="display:none;">
+    <div class="row justify-content-center">
+      <div class="col-12 col-md-9 col-lg-7">
+        <!-- 保留原本的題號、進度條等... -->
+        <div class="card p-3 p-md-4 shadow-sm">
+          <div id="question-container"></div>
+          <!-- 下一題按鈕... -->
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// API 定義補充
+const API = {
+  // ... 其他 API ...
+  getSystemPrompts:    () => fetchAPI('getSystemPrompts'),
+  updateSystemPrompts: (m,c,p) => fetchAPIPost('updateSystemPrompts', {mathPrompt:m, chinesePrompt:c, pwd:p})
+};
+
+// 載入設定頁籤資料
+async function loadSettingsTab() {
+  try {
+    const prompts = await API.getSystemPrompts();
+    document.getElementById('prompt-math').value = prompts.mathPrompt;
+    document.getElementById('prompt-chinese').value = prompts.chinesePrompt;
+  } catch(e) {
+    console.error('無法載入 Prompts', e);
+  }
+}
+
+// 驗證密碼並儲存 Prompt
+async function verifyAndSavePrompts() {
+  const mathP = document.getElementById('prompt-math').value.trim();
+  const chineseP = document.getElementById('prompt-chinese').value.trim();
+  
+  const { value: password } = await Swal.fire({
+    title: '需要管理員權限',
+    text: '修改系統出題邏輯可能影響全校出題，請輸入管理員密碼：',
+    input: 'password',
+    inputPlaceholder: '請輸入密碼',
+    showCancelButton: true,
+    confirmButtonText: '驗證並儲存'
+  });
+
+  if (password) {
+    Swal.fire({title:'儲存中...', didOpen:()=>Swal.showLoading()});
+    try {
+      const msg = await API.updateSystemPrompts(mathP, chineseP, password);
+      Swal.fire('成功', msg, 'success');
+    } catch(e) {
+      Swal.fire('錯誤', e.message, 'error');
+    }
+  }
+}
+
+// 題目渲染 (加入 KaTeX 支援)
+function renderQuestion() {
+  // ... (保留你原有的 renderQuestion 建立 DOM 的邏輯) ...
+  
+  const wrap = document.getElementById('question-container');
+  // 假設已將題目 DOM 塞入 wrap 中
+  
+  // ★ 呼叫 KaTeX 渲染數學公式
+  if (typeof renderMathInElement === 'function') {
+    renderMathInElement(wrap, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false},
+        {left: '\\(', right: '\\)', display: false},
+        {left: '\\[', right: '\\]', display: true}
+      ],
+      throwOnError: false
+    });
+  }
+}
+
+// ... 請保留其餘原本的 JS 邏輯 ...
+</script>
+</body>
+</html>
