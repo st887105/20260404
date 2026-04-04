@@ -399,7 +399,7 @@
                     <div class="mb-3">
                       <label class="form-label text-muted small fw-bold">AI 模型名稱</label>
                       <div class="input-group input-group-sm">
-                        <input type="text" id="setting-gemini-model" class="form-control font-monospace" placeholder="gemini-2.0-flash-lite">
+                        <input type="text" id="setting-gemini-model" class="form-control font-monospace" placeholder="gemini-2.5-flash">
                         <button class="btn btn-outline-primary" onclick="saveGeminiSettings()">儲存</button>
                       </div>
                       <div class="form-check mt-1">
@@ -407,7 +407,7 @@
                         <label class="form-check-label small" for="setting-is-paid">付費帳號（支援 50 人同時出題）</label>
                       </div>
                       <div class="small text-muted mt-1">
-                        免費可用：<code>gemini-2.0-flash-lite</code>
+                        免費可用：<code>gemini-2.5-flash</code>（或 gemini-2.0-flash-lite）
                         <span id="gemini-status-badge" class="ms-2"></span>
                       </div>
                     </div>
@@ -970,7 +970,7 @@ async function uploadAndGenerate() {
     // 步驟二：判斷付費帳號（決定延遲）
     let geminiSettings = { isPaid: false };
     try { geminiSettings = await API.getGeminiSettings(); } catch(e) {}
-    const delay = geminiSettings.isPaid ? 500 : 3000;
+    const delay = geminiSettings.isPaid ? 500 : 6000;
 
     // 步驟三：批次出題迴圈
     const nodesArray = app.excelNodes;
@@ -1158,7 +1158,7 @@ async function regenTask(taskName) {
 
       if (result.done) break;
       batchIndex++;
-      await sleep(3000);
+      await sleep(6000);
     }
 
     const elapsed = getElapsedStr();
@@ -1788,7 +1788,7 @@ async function wizardCreateAndGenerate() {
 
     let geminiSettings = { isPaid: false };
     try { geminiSettings = await API.getGeminiSettings(); } catch(e) {}
-    const delay = geminiSettings.isPaid ? 500 : 3000;
+    const delay = geminiSettings.isPaid ? 500 : 6000;
 
     let batchIndex   = 0;
     let totalBatches = null;
