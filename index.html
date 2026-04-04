@@ -135,11 +135,7 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
           <i class="fa-solid fa-lock-open me-2"></i>進入管理後台
         </button>
 
-        <hr>
-        <p class="text-muted small mb-2">尚未設定系統？</p>
-        <button class="btn btn-outline-secondary w-100" onclick="initDB()">
-          <i class="fa-solid fa-database me-2"></i>初始化資料庫
-        </button>
+
       </div>
 
     </div>
@@ -324,8 +320,33 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
                     </div>
 
                     <hr>
-                    <button class="btn btn-outline-danger w-100" onclick="API.clearBankCache().then(m=>Swal.fire('完成',m,'success'))">
+                    <!-- ★ Gemini 模型設定 -->
+                    <div class="mb-3">
+                      <label class="form-label text-muted small fw-bold">AI 模型名稱
+                        <span class="text-muted fw-normal">（可在試算表 Config 修改）</span>
+                      </label>
+                      <div class="input-group input-group-sm">
+                        <input type="text" id="setting-gemini-model" class="form-control font-monospace"
+                               placeholder="gemini-1.5-flash">
+                        <button class="btn btn-outline-primary" onclick="saveGeminiSettings()">儲存</button>
+                      </div>
+                      <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" id="setting-is-paid">
+                        <label class="form-check-label small" for="setting-is-paid">
+                          付費帳號（移除限流，支援 50 人同時出題，前端間隔縮短至 0.5 秒）
+                        </label>
+                      </div>
+                      <div class="small text-muted mt-1">
+                        免費可用模型：<code>gemini-1.5-flash</code>
+                        <span id="gemini-status-badge" class="ms-2"></span>
+                      </div>
+                    </div>
+                    <hr>
+                    <button class="btn btn-outline-danger w-100 mb-2" onclick="API.clearBankCache().then(m=>Swal.fire('完成',m,'success'))">
                       <i class="fa-solid fa-broom me-1"></i>清除題庫快取
+                    </button>
+                    <button class="btn btn-outline-secondary w-100" onclick="initDB()">
+                      <i class="fa-solid fa-database me-1"></i>初始化／修復資料庫
                     </button>
                   </div>
                 </div>
@@ -444,7 +465,9 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
 <!-- ===================== JavaScript ===================== -->
 <script>
 // ─── 全域狀態 ───────────────────────────────────────────────
-let GAS_URL   = localStorage.getItem('GAS_URL') || DEFAULT_GAS_URL;
+let GAS_URL        = localStorage.getItem('GAS_URL') || DEFAULT_GAS_URL;
+let _geminiModel   = 'gemini-1.5-flash';  // 從 Config 載入
+let _geminiIsPaid  = false;               // 付費帳號：移除限流
 
 // ─── GAS URL 設定對話框 ───────────────────────────────────────
 async function showGasUrlDialog() {
@@ -563,17 +586,22 @@ const API = {
   regenerateBatchForTask:       (taskName,idx,mode,fid) => callAPI('regenerateBatchForTask', { taskName, batchIndex:idx, mode, folderId:fid }),
   getPracticeQuestionsForErrors:(taskName)    => callAPI('getPracticeQuestionsForErrors', { taskName }),
   updateSystemPrompts:          (m,c,mw,cw,p) => callAPI('updateSystemPrompts', { mathPrompt:m, chinesePrompt:c, mathWorksheetPrompt:mw, chineseWorksheetPrompt:cw, pwd:p }),
+  getGeminiSettings:            ()             => callAPI('getGeminiSettings'),
+  updateGeminiSettings:         (model,paid,p) => callAPI('updateGeminiSettings', { model, isPaid:paid, pwd:p }),
 };
 
 // ─── 初始化 ─────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   loadTasks();
-  // ★ 自動載入已儲存的資料夾 ID（頁面載入時預填）
+  // 載入已儲存的資料夾 ID
   API.getFolderId().then(id => {
-    if (id) {
-      const el = document.getElementById('folder-id-input');
-      if (el && !el.value) el.value = id;
-    }
+    if (id) { const el = document.getElementById('folder-id-input'); if (el && !el.value) el.value = id; }
+  }).catch(() => {});
+  // ★ 載入 Gemini 設定（模型名稱 + 付費狀態）
+  API.getGeminiSettings().then(s => {
+    _geminiModel  = s.model  || 'gemini-1.5-flash';
+    _geminiIsPaid = s.isPaid || false;
+    console.log('[Gemini] model=' + _geminiModel + ' isPaid=' + _geminiIsPaid);
   }).catch(() => {});
 });
 
@@ -892,7 +920,7 @@ async function uploadAndGenerate() {
         loadTasks(); break;
       }
       batchIdx++;
-      await new Promise(r=>setTimeout(r,2000));  // 2秒間隔，配合 GAS 端的限流設定
+      await new Promise(r=>setTimeout(r, _geminiIsPaid ? 500 : 5000));  // 付費:0.5s / 免費:5s
     } catch(e) {
       errCnt++;
       if (errCnt>=MAX_ERR) {
@@ -904,8 +932,10 @@ async function uploadAndGenerate() {
                '可稍後至「題庫管理」點「重新出題」繼續。</p>' });
         break;
       }
-      pMsg.innerHTML='<span class="text-warning">⚠️ 第'+batchIdx+'批遇到問題，15秒後自動重試（'+errCnt+'/'+MAX_ERR+'）…</span>';
-      await new Promise(r=>setTimeout(r,15000));
+      const isQuota = e.message.includes('配額') || e.message.includes('quota') || e.message.includes('RESOURCE_EXHAUSTED');
+      const waitSec = isQuota ? 65 : 15;  // 配額問題等更久
+      pMsg.innerHTML='<span class="text-warning">⚠️ 第'+batchIdx+'批' + (isQuota ? '配額暫達上限' : '遇到問題') + '，'+waitSec+'秒後自動重試（'+errCnt+'/'+MAX_ERR+'）…</span>';
+      await new Promise(r=>setTimeout(r, waitSec * 1000));
     }
   }
 }
@@ -1042,7 +1072,7 @@ async function startRegenerate() {
         loadBankQuestions(); break;
       }
       batchIndex++;
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, _geminiIsPaid ? 500 : 5000));  // 付費:0.5s / 免費:5s
     } catch(e) {
       errCnt++;
       if (errCnt >= MAX_ERR) {
@@ -1053,8 +1083,10 @@ async function startRegenerate() {
                 '<p class="text-muted small">已完成 ' + batchIndex + ' 批。可稍後再點「重新出題」繼續。</p>' });
         break;
       }
-      msg.innerHTML = '<span class="text-warning">⚠️ 第' + batchIndex + '批遇到問題，15秒後自動重試（' + errCnt + '/' + MAX_ERR + '）…</span>';
-      await new Promise(r => setTimeout(r, 15000));
+      const isQuota2 = e.message.includes('配額') || e.message.includes('quota');
+      const wait2 = isQuota2 ? 65 : 15;
+      msg.innerHTML = '<span class="text-warning">⚠️ 第' + batchIndex + '批' + (isQuota2?'配額暫達上限':'遇到問題') + '，'+wait2+'秒後自動重試（' + errCnt + '/' + MAX_ERR + '）…</span>';
+      await new Promise(r => setTimeout(r, wait2 * 1000));
     }
   }
 }
@@ -1363,18 +1395,57 @@ async function genWorksheet() {
 // ─── 後台：設定 ─────────────────────────────────────────────
 async function loadSettingsTab() {
   try {
-    const [settings, folderId, prompts] = await Promise.all([
-      API.getQuizSettings(), API.getFolderId(), API.getSystemPrompts()
+    const [settings, folderId, prompts, gemini] = await Promise.all([
+      API.getQuizSettings(), API.getFolderId(), API.getSystemPrompts(), API.getGeminiSettings()
     ]);
-    document.getElementById('setting-quiz-count').value         = settings.quizCount;
-    document.getElementById('setting-folder-id').value          = folderId;
-    document.getElementById('prompt-math').value                = prompts.mathPrompt;
-    document.getElementById('prompt-chinese').value             = prompts.chinesePrompt;
+    document.getElementById('setting-quiz-count').value = settings.quizCount;
+    document.getElementById('setting-folder-id').value  = folderId;
+    document.getElementById('prompt-math').value         = prompts.mathPrompt;
+    document.getElementById('prompt-chinese').value      = prompts.chinesePrompt;
     const mws = document.getElementById('prompt-math-ws');
     const cws = document.getElementById('prompt-chinese-ws');
-    if (mws) mws.value = prompts.mathWorksheetPrompt   || '';
-    if (cws) cws.value = prompts.chineseWorksheetPrompt|| '';
+    if (mws) mws.value = prompts.mathWorksheetPrompt    || '';
+    if (cws) cws.value = prompts.chineseWorksheetPrompt || '';
+    // ★ 載入 Gemini 設定
+    const modelEl = document.getElementById('setting-gemini-model');
+    const paidEl  = document.getElementById('setting-is-paid');
+    const badge   = document.getElementById('gemini-status-badge');
+    if (modelEl) modelEl.value   = gemini.model || 'gemini-1.5-flash';
+    if (paidEl)  paidEl.checked  = gemini.isPaid || false;
+    if (badge) {
+      badge.innerHTML = gemini.isPaid
+        ? '<span class="badge bg-success">✅ 付費帳號（高速模式）</span>'
+        : '<span class="badge bg-secondary">免費帳號（限流模式）</span>';
+    }
+    // 同步更新全域變數
+    _geminiModel  = gemini.model  || 'gemini-1.5-flash';
+    _geminiIsPaid = gemini.isPaid || false;
   } catch(e) { console.error('設定載入失敗', e); }
+}
+
+// ★ 儲存 Gemini 設定
+async function saveGeminiSettings() {
+  const model  = (document.getElementById('setting-gemini-model').value || '').trim();
+  const isPaid = document.getElementById('setting-is-paid').checked;
+  if (!model) { Swal.fire('提示', '請輸入模型名稱', 'warning'); return; }
+
+  const { value: password } = await Swal.fire({
+    title: '需要管理員驗證', input: 'password', inputPlaceholder: '請輸入密碼',
+    showCancelButton: true, confirmButtonText: '驗證並儲存', cancelButtonText: '取消'
+  });
+  if (!password) return;
+
+  Swal.fire({ title: '儲存中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+  try {
+    const msg = await API.updateGeminiSettings(model, isPaid, password);
+    _geminiModel  = model;
+    _geminiIsPaid = isPaid;
+    const badge = document.getElementById('gemini-status-badge');
+    if (badge) badge.innerHTML = isPaid
+      ? '<span class="badge bg-success">✅ 付費帳號（高速模式）</span>'
+      : '<span class="badge bg-secondary">免費帳號（限流模式）</span>';
+    Swal.fire('成功', msg + '\n前端批次間隔已自動調整為 ' + (isPaid ? '0.5' : '5') + ' 秒', 'success');
+  } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
 }
 
 async function saveQuizCount() {
