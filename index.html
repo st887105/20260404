@@ -968,44 +968,93 @@ async function loadBankStatus() {
 }
 
 // ─── 重新出題（題庫管理）────────────────────────────────────
+let _regenIsRunning = false;
+let _regenTipTimer  = null;
+
 async function startRegenerate() {
+  if (_regenIsRunning) {
+    Swal.fire({ icon:'info', title:'⏳ 重新出題進行中',
+      html:'<p>系統正在出題中，請耐心等待！</p><p class="text-muted small">重複點擊不會加速</p>',
+      confirmButtonText:'好，繼續等待' });
+    return;
+  }
+
   const taskName = document.getElementById('bank-task-sel').value;
   const mode     = document.getElementById('bank-regen-mode').value;
   if (!taskName) { Swal.fire('提示','請先選擇任務','warning'); return; }
 
-  const cfg  = await API.getFolderId();
-  const folderId = (mode!=='ai') ? (cfg||'') : '';
+  const folderId = (mode !== 'ai') ? (await API.getFolderId() || '') : '';
 
-  const confirm = await Swal.fire({
-    title: '確認重新出題',
-    html: '將為任務「'+taskName+'」重新生成題目<br><small class="text-muted">（不會清除已有題目，若需清空請先點「清空此批節點題庫」）</small>',
-    icon: 'question', showCancelButton: true,
-    confirmButtonText: '開始出題', cancelButtonText: '取消'
+  const ok = await Swal.fire({
+    title: '🔄 確認重新出題', icon: 'question',
+    html: '<div class="text-start small">' +
+          '<p>任務：<strong>' + taskName + '</strong></p>' +
+          '<p>模式：<strong>' + mode + '</strong></p>' +
+          '<p class="text-muted">不會清除已有題目；如需清空請先點「清空此批節點題庫」</p>' +
+          '</div>',
+    showCancelButton: true, confirmButtonText: '🚀 開始出題', cancelButtonText: '取消'
   });
-  if (!confirm.isConfirmed) return;
+  if (!ok.isConfirmed) return;
+
+  _regenIsRunning = true;
+  const regenBtn = document.querySelector('[onclick="startRegenerate()"]');
+  if (regenBtn) { regenBtn.disabled = true; regenBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>出題中…'; }
 
   const progressDiv = document.getElementById('bank-regen-progress');
   const bar         = document.getElementById('bank-regen-bar');
   const msg         = document.getElementById('bank-regen-msg');
   progressDiv.style.display = '';
+  msg.innerHTML = '準備開始出題… <span id="regen-tip" class="text-info small">' + _genTips[0] + '</span>';
 
-  let batchIndex = 0;
+  // 友善提示輪替
+  let tipIdx = 0;
+  _regenTipTimer = setInterval(() => {
+    const el = document.getElementById('regen-tip');
+    if (el) el.textContent = _genTips[++tipIdx % _genTips.length];
+  }, 9000);
+
+  let batchIndex = 0; let errCnt = 0; const MAX_ERR = 3;
+  const t0 = Date.now();
+
   while (true) {
     try {
       const result = await API.regenerateBatchForTask(taskName, batchIndex, mode, folderId);
       const pct    = Math.round((result.current / result.total) * 100);
-      bar.style.width = pct + '%';
-      msg.textContent = result.message;
+      const elap   = Math.round((Date.now() - t0) / 1000);
+      const remain = result.current > 0 ? Math.round((elap / result.current) * (result.total - result.current)) : 0;
+      const remTxt = remain >= 60 ? Math.floor(remain/60) + '分' + remain%60 + '秒' : remain + '秒';
+
+      bar.style.width = pct + '%'; bar.textContent = pct + '%';
+      const clr = (result.message||'').includes('通用') ? '#e65100' : '#1b5e20';
+      msg.innerHTML = '<span style="color:' + clr + '">' + result.message + '</span>' +
+                      '　<span class="text-muted small">剩餘約 ' + remTxt + '</span>' +
+                      '　<span id="regen-tip" class="text-info small"></span>';
+      errCnt = 0;
+
       if (result.done) {
-        Swal.fire('✅ 完成','重新出題完成！共 '+result.total+' 批次。','success');
-        loadBankQuestions();
-        break;
+        clearInterval(_regenTipTimer); _regenIsRunning = false;
+        if (regenBtn) { regenBtn.disabled = false; regenBtn.innerHTML = '<i class="fa-solid fa-rotate me-1"></i>重新出題'; }
+        const totalSec = Math.round((Date.now()-t0)/1000);
+        bar.style.width = '100%'; bar.textContent = '100%';
+        Swal.fire({ icon:'success', title:'🎉 重新出題完成！',
+          html: '<p>共完成 <strong>' + result.total + '</strong> 批次</p>' +
+                '<p>總耗時：<strong>' + (totalSec >= 60 ? Math.floor(totalSec/60) + '分' : '') + totalSec%60 + '秒</strong></p>' });
+        loadBankQuestions(); break;
       }
       batchIndex++;
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 2000));
     } catch(e) {
-      Swal.fire('出題錯誤', e.message, 'error');
-      break;
+      errCnt++;
+      if (errCnt >= MAX_ERR) {
+        clearInterval(_regenTipTimer); _regenIsRunning = false;
+        if (regenBtn) { regenBtn.disabled = false; regenBtn.innerHTML = '<i class="fa-solid fa-rotate me-1"></i>重新出題'; }
+        Swal.fire({ icon:'error', title:'出題中斷',
+          html: '<p>' + e.message.substring(0, 200) + '</p>' +
+                '<p class="text-muted small">已完成 ' + batchIndex + ' 批。可稍後再點「重新出題」繼續。</p>' });
+        break;
+      }
+      msg.innerHTML = '<span class="text-warning">⚠️ 第' + batchIndex + '批遇到問題，15秒後自動重試（' + errCnt + '/' + MAX_ERR + '）…</span>';
+      await new Promise(r => setTimeout(r, 15000));
     }
   }
 }
