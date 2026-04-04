@@ -71,16 +71,22 @@
 </head>
 <body>
 
-<!-- GAS Web App URL -->
+<!-- GAS Web App URL（部署新版本後請在此更新，或點右上角按鈕設定） -->
 <script>
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvqu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
 </script>
 
 <!-- ===================== HEADER ===================== -->
-<header class="app-header">
+<header class="app-header" style="position:relative;">
   <div class="container text-center">
     <h2 class="mb-1"><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
-    <p class="mb-0 opacity-75">階梯式出題 (Math 1-3-3-3 / Chinese 1-4-5)｜KaTeX 支援｜v7.1</p>
+    <p class="mb-0 opacity-75">階梯式出題 (Math 1-3-3-3 / Chinese 1-4-5)｜KaTeX 支援｜v8.0</p>
+  </div>
+  <div style="position:absolute;top:10px;right:14px;">
+    <button onclick="showGasUrlDialog()"
+            style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.5);border-radius:6px;padding:4px 10px;font-size:.75rem;cursor:pointer;">
+      <i class="fa-solid fa-link"></i> GAS 網址
+    </button>
   </div>
 </header>
 
@@ -439,7 +445,46 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
 <!-- ===================== JavaScript ===================== -->
 <script>
 // ─── 全域狀態 ───────────────────────────────────────────────
-let GAS_URL   = DEFAULT_GAS_URL;
+let GAS_URL   = localStorage.getItem('GAS_URL') || DEFAULT_GAS_URL;
+
+// ─── GAS URL 設定對話框 ───────────────────────────────────────
+async function showGasUrlDialog() {
+  const { value: url } = await Swal.fire({
+    title: 'GAS Web App 網址設定',
+    html:
+      '<p class="text-muted small mb-2">部署新版本後貼上新的網址。格式：<br>' +
+      '<code>https://script.google.com/macros/s/【ID】/exec</code></p>' +
+      '<input id="swal-gas-url" class="swal2-input" placeholder="貼上 GAS 網址" value="' + GAS_URL + '" style="font-size:.8rem;">',
+    showCancelButton: true,
+    confirmButtonText: '儲存並測試',
+    cancelButtonText: '取消',
+    preConfirm: () => {
+      const v = document.getElementById('swal-gas-url').value.trim();
+      if (!v.includes('script.google.com')) {
+        Swal.showValidationMessage('請輸入有效的 GAS 網址');
+        return false;
+      }
+      return v;
+    }
+  });
+  if (!url) return;
+  GAS_URL = url.endsWith('/exec') ? url : url + '/exec';
+  localStorage.setItem('GAS_URL', GAS_URL);
+  Swal.fire({ title: '測試連線中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+  try {
+    await API.getTasks();
+    Swal.fire('✅ 連線成功', 'GAS 網址已儲存，頁面將重新整理。', 'success').then(() => location.reload());
+  } catch(e) {
+    Swal.fire({
+      icon: 'error', title: '連線失敗',
+      html: '<p>' + e.message + '</p>' +
+            '<p class="text-muted small mt-2">請確認：<br>' +
+            '1. 網址是否正確<br>' +
+            '2. GAS 部署的存取權限是否設為「任何人」<br>' +
+            '3. 是否已部署最新版本</p>'
+    });
+  }
+}
 
 // ─── 工具：去識別化 ─────────────────────────────────────────
 function anonymizeName(name) {
@@ -523,9 +568,7 @@ const API = {
 
 // ─── 初始化 ─────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  // 嘗試從 localStorage 讀取 GAS URL
-  const saved = localStorage.getItem('GAS_URL');
-  if (saved) GAS_URL = saved;
+  // GAS_URL 已在全域變數初始化時從 localStorage 讀取
   loadTasks();
 });
 
@@ -534,9 +577,24 @@ async function loadTasks() {
     tasks = await API.getTasks();
     const sel = document.getElementById('login-task');
     sel.innerHTML = '<option value="">-- 請選擇任務 --</option>' +
-      tasks.map(t => `<option value="${t.taskName}">${t.taskName}（${t.grade} ${t.subject}）</option>`).join('');
+      tasks.map(t => '<option value="' + t.taskName + '">' + t.taskName + '（' + t.grade + ' ' + t.subject + '）</option>').join('');
   } catch(e) {
-    document.getElementById('login-task').innerHTML = '<option value="">無法連線，請確認 GAS 部署設定</option>'; console.error('loadTasks:', e);
+    console.error('loadTasks:', e);
+    document.getElementById('login-task').innerHTML = '<option value="">⚠️ 無法連線 GAS，請點右上角設定網址</option>';
+    // 顯示提示（只在第一次）
+    if (!sessionStorage.getItem('gasErrShown')) {
+      sessionStorage.setItem('gasErrShown','1');
+      Swal.fire({
+        icon: 'warning', title: 'GAS 連線失敗',
+        html: '<p>無法連接到後端伺服器。</p>' +
+              '<p class="text-muted small">常見原因：<br>' +
+              '① 部署新版 Code.gs 後 URL 改變了<br>' +
+              '② 部署的存取權限不是「任何人」<br>' +
+              '③ 尚未部署</p>',
+        confirmButtonText: '設定 GAS 網址',
+        showCancelButton: true, cancelButtonText: '略過'
+      }).then(r => { if (r.isConfirmed) showGasUrlDialog(); });
+    }
   }
 }
 
