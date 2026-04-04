@@ -956,6 +956,7 @@ async function uploadAndGenerate() {
     // 步驟三：批次出題迴圈
     const nodesArray = app.excelNodes;
     let batchIndex   = 0;
+    let totalBatches = null;
 
     while (true) {
       let result;
@@ -966,9 +967,10 @@ async function uploadAndGenerate() {
         result = await API.generateBatchFromFolder(actualFolderId, nodesArray, grade, subject, batchIndex, mode);
       }
 
-      const pct = Math.min(95, Math.round(8 + (result.current / Math.max(result.total, 1)) * 87));
+      totalBatches = result.total || totalBatches || 1;
+      const pct = Math.min(95, Math.round(10 + (result.current / Math.max(totalBatches, 1)) * 85));
       pBar.style.width = pct + '%';
-      pMsg.textContent = result.message;
+      pMsg.innerHTML = `<b>${result.current}</b>/${totalBatches} 批完成（${pct}%）｜${esc(result.message)}`;
 
       if (result.done) break;
 
@@ -990,9 +992,19 @@ async function uploadAndGenerate() {
     populateAdminTaskDropdowns();
 
   } catch(e) {
-    pMsg.innerHTML = `<span class="text-danger">❌ 失敗：${e.message}</span>`;
-    Swal.fire({ icon:'error', title:'出題過程發生錯誤', text: e.message,
-      footer:'如為 Gemini 配額問題，請等待 1 分鐘後至「題庫管理」點「重新出題」繼續。' });
+    pMsg.innerHTML = `<span class="text-danger">❌ 失敗：${esc(e.message)}</span>`;
+    Swal.fire({
+      icon:'error', title:'出題中斷',
+      html: `<b>錯誤：</b>${esc(e.message)}<br><br>
+             <div class="alert alert-warning small text-start mb-0">
+               <b>🔧 建議操作：</b><br>
+               1. 前往 GAS 編輯器 → 選取函式 <code>testGeminiAPI</code> → 點▶執行<br>
+               2. 確認哪個模型可用，系統會自動更新<br>
+               3. 回到「題庫管理」點「重新出題」繼續
+             </div>`,
+      confirmButtonText: '我知道了',
+      footer: '若反覆失敗請至 aistudio.google.com 確認 API 金鑰有效'
+    });
   }
 }
 
@@ -1058,23 +1070,77 @@ async function loadBankStatus() {
 
 async function regenTask(taskName) {
   const r = await Swal.fire({
-    title:'重新出題', text:`確定要為「${taskName}」重新出題？（原有題目不會被刪除）`,
-    showCancelButton:true, confirmButtonText:'確定', cancelButtonText:'取消'
+    title:'重新出題', 
+    html:`確定要為「${esc(taskName)}」重新出題？<br><span class="small text-muted">（含多個節點，約需 2-5 分鐘）</span>`,
+    showCancelButton:true, confirmButtonText:'確定開始', cancelButtonText:'取消'
   });
   if (!r.isConfirmed) return;
 
-  Swal.fire({ title:'重新出題中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+  // 建立帶進度的對話框
+  Swal.fire({
+    title: '⏳ 重新出題中',
+    html: `
+      <div class="text-start small mb-2" id="regen-status">正在呼叫 AI 出第 1 批...</div>
+      <div class="progress" style="height:12px;border-radius:6px;">
+        <div id="regen-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width:0%;transition:width .5s;"></div>
+      </div>
+      <div class="text-muted mt-2 small" id="regen-detail">初始化中...</div>
+      <div class="mt-3 p-2 bg-light rounded small text-muted">
+        💡 AI 每道節點各出 1 題，批數較多時請耐心等候。<br>
+        若逾時可關閉後到「題庫管理」點「重新出題」繼續。
+      </div>`,
+    allowOutsideClick: false,
+    showConfirmButton: false,
+    didOpen: () => {}
+  });
+
   try {
     let batchIndex = 0;
+    let totalBatches = null;
+
     while (true) {
       const result = await API.regenerateBatchForTask(taskName, batchIndex, 'ai', '');
+
+      totalBatches = result.total || totalBatches || 1;
+      const pct = Math.round((result.current / totalBatches) * 100);
+
+      // 更新進度條和說明
+      const barEl    = document.getElementById('regen-bar');
+      const statusEl = document.getElementById('regen-status');
+      const detailEl = document.getElementById('regen-detail');
+      if (barEl)    barEl.style.width = pct + '%';
+      if (statusEl) statusEl.innerHTML = `正在出第 <b>${result.current}</b> / ${totalBatches} 批... (${pct}%)`;
+      if (detailEl) detailEl.textContent = result.message || '';
+
       if (result.done) break;
+
       batchIndex++;
+      // 免費帳號批次間隔 3 秒（避免配額問題）
       await sleep(3000);
     }
-    Swal.fire({ icon:'success', title:'重新出題完成！' });
+
+    Swal.fire({
+      icon: 'success', title: '出題完成！🎉',
+      html: `已完成所有批次出題。<br>
+             <span class="small text-muted">學生現在可以登入開始測驗。</span>`,
+      confirmButtonText: '好的'
+    });
+
+    // 更新任務清單
+    app.taskList = await API.getTasks();
+
   } catch(e) {
-    Swal.fire({ icon:'error', title:'失敗', text:e.message });
+    Swal.fire({
+      icon: 'error', title: '出題中斷',
+      html: `<b>錯誤原因：</b>${esc(e.message)}<br><br>
+             <div class="alert alert-info small text-start">
+               <b>排查建議：</b><br>
+               1. 到 GAS 編輯器執行 <code>testGeminiAPI()</code> 診斷模型<br>
+               2. 確認 API 金鑰在 <a href="https://aistudio.google.com" target="_blank">Google AI Studio</a> 有效<br>
+               3. 若是配額問題，等 1 分鐘後點「重新出題」繼續
+             </div>`,
+      confirmButtonText: '我知道了'
+    });
   }
 }
 
