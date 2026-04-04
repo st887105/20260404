@@ -133,7 +133,8 @@
           </div>
 
           <ul class="nav nav-tabs mb-3 flex-nowrap overflow-auto" id="adminTabs">
-            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-upload">📤 建立任務</button></li>
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-wizard">🚀 快速設定精靈</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-upload">📤 Excel 上傳</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-bank" onclick="loadBankStatus()">📚 題庫管理</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-results" onclick="loadResults()">📊 成績查詢</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analysis" onclick="loadAnalysis()">🔍 差異化分析</button></li>
@@ -142,8 +143,100 @@
 
           <div class="tab-content">
 
-            <!-- 建立任務 -->
-            <div class="tab-pane fade show active" id="tab-upload">
+            <!-- ██ 快速設定精靈（免 Excel）██ -->
+            <div class="tab-pane fade show active" id="tab-wizard">
+              <div class="alert alert-success py-2 px-3 small mb-3">
+                <b>🚀 快速設定精靈</b>：不需要 Excel！直接在此輸入學生資料與弱點節點，一鍵建立任務並出題。
+              </div>
+
+              <!-- Step 1: 基本設定 -->
+              <div class="card border-0 bg-light p-3 mb-3">
+                <h6 class="fw-bold mb-3">① 任務基本設定</h6>
+                <div class="row g-3">
+                  <div class="col-12 col-md-4">
+                    <label class="form-label fw-bold small">任務名稱</label>
+                    <input id="wiz-task-name" type="text" class="form-control" placeholder="例：五年甲班114上學力檢測">
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label fw-bold small">年級</label>
+                    <select id="wiz-grade" class="form-select" onchange="updateWizNodePresets()">
+                      <option>三年級</option><option>四年級</option><option selected>五年級</option><option>六年級</option>
+                    </select>
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label fw-bold small">科目</label>
+                    <select id="wiz-subject" class="form-select" onchange="updateWizNodePresets()">
+                      <option>數學</option><option>國語</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Step 2: 選擇節點 -->
+              <div class="card border-0 bg-light p-3 mb-3">
+                <h6 class="fw-bold mb-2">② 選擇本次測驗的知識節點</h6>
+                <p class="text-muted small mb-2">勾選學生需要補救的節點（可多選），或在下方輸入自訂節點。</p>
+                <div id="wiz-node-presets" class="mb-2"></div>
+                <div class="input-group mt-2">
+                  <input id="wiz-custom-node" type="text" class="form-control form-control-sm" placeholder="輸入自訂節點名稱，按 Enter 新增">
+                  <button class="btn btn-outline-primary btn-sm" onclick="addWizCustomNode()">新增</button>
+                </div>
+                <div class="mt-2">
+                  <strong class="small">已選節點：</strong>
+                  <div id="wiz-selected-nodes" class="mt-1"><span class="text-muted small">（尚未選擇）</span></div>
+                </div>
+              </div>
+
+              <!-- Step 3: 學生名單 -->
+              <div class="card border-0 bg-light p-3 mb-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h6 class="fw-bold mb-0">③ 輸入學生名單</h6>
+                  <button class="btn btn-outline-secondary btn-sm" onclick="addWizStudentRow()">
+                    <i class="fa-solid fa-plus me-1"></i>新增一列
+                  </button>
+                </div>
+                <p class="text-muted small mb-2">為每位學生勾選其弱點節點（節點須先在②選定）。</p>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered mb-0" id="wiz-student-table">
+                    <thead class="table-primary">
+                      <tr>
+                        <th style="width:80px">座號</th>
+                        <th style="width:100px">姓名</th>
+                        <th id="wiz-node-header">弱點節點（請先在②選節點）</th>
+                        <th style="width:40px"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="wiz-student-tbody"></tbody>
+                  </table>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm mt-2" onclick="addWizStudentRows(10)">
+                  <i class="fa-solid fa-list me-1"></i>一次新增 10 列
+                </button>
+              </div>
+
+              <!-- Step 4: 執行 -->
+              <div class="card border-0 bg-light p-3 mb-3">
+                <h6 class="fw-bold mb-2">④ 確認並建立任務</h6>
+                <div id="wiz-summary" class="alert alert-info small py-2 mb-2" style="display:none;"></div>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button class="btn btn-primary" onclick="wizardInitDB()">
+                    <i class="fa-solid fa-database me-1"></i>先初始化資料庫
+                  </button>
+                  <button class="btn btn-success" onclick="wizardCreateAndGenerate()">
+                    <i class="fa-solid fa-wand-magic-sparkles me-1"></i>建立任務並出題
+                  </button>
+                </div>
+                <div class="mt-3" id="wiz-progress-area" style="display:none;">
+                  <div class="progress quiz-progress mb-1">
+                    <div id="wiz-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width:0%"></div>
+                  </div>
+                  <div id="wiz-progress-msg" class="text-muted small"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ██ Excel 上傳（原建立任務）██ -->
+            <div class="tab-pane fade" id="tab-upload">
               <div class="row g-3">
 
                 <div class="col-12 col-md-4">
@@ -1367,12 +1460,246 @@ function showGasUrlDialog() {
 }
 
 // ════════════════════════════════════════════════════
+// ⑲ 快速設定精靈（免 Excel）
+// ════════════════════════════════════════════════════
+
+const PRESET_NODES = {
+  '五年級': {
+    '數學': ['整數的四則運算','小數的乘除法','分數的加減法','分數的乘除法','概數與估算','面積與周長','圓面積與圓周長','比與比值','速率問題','體積與容積'],
+    '國語': ['字音辨識','字形與部首','詞語釋義','成語應用','句型仿作','閱讀理解-直述','閱讀理解-推論','修辭技巧','文章結構','標點符號']
+  },
+  '六年級': {
+    '數學': ['分數的乘除法','比與比值','速率問題','體積與容積','統計圖表','代數思維','圓面積與圓周長','比例關係','負數概念','柱狀體表面積'],
+    '國語': ['字音辨識','詞語釋義','成語應用','修辭技巧','閱讀理解-直述','閱讀理解-推論','閱讀理解-評鑑','文章結構','議論文分析','詩詞賞析']
+  },
+  '四年級': {
+    '數學': ['整數的四則運算','概數與估算','小數的加減法','分數的加減法','面積與周長','角度量測','因數與倍數','時間計算','折線圖與長條圖','平行與垂直'],
+    '國語': ['字音辨識','字形與部首','詞語釋義','句型練習','閱讀理解-直述','修辭技巧','段落大意','標點符號','書信格式','說明文理解']
+  },
+  '三年級': {
+    '數學': ['整數的加減法','整數的乘除法','概數與估算','分數基礎','時間計算','長度與重量','圖形分類','乘法表應用','陣列與倍數','資料整理'],
+    '國語': ['注音符號','字音辨識','字形與部首','詞語釋義','句子練習','閱讀理解-直述','段落大意','標點符號','日記格式','說故事技巧']
+  }
+};
+
+let wizSelectedNodes = [];
+
+function updateWizNodePresets() {
+  const grade   = document.getElementById('wiz-grade').value;
+  const subject = document.getElementById('wiz-subject').value;
+  const nodes   = PRESET_NODES[grade]?.[subject] || [];
+  
+  wizSelectedNodes = [];
+  renderWizSelected();
+  
+  const container = document.getElementById('wiz-node-presets');
+  container.innerHTML = nodes.map(n => `
+    <div class="form-check form-check-inline mb-1">
+      <input class="form-check-input" type="checkbox" id="node-${esc(n)}" value="${esc(n)}" onchange="toggleWizNode('${esc(n)}', this.checked)">
+      <label class="form-check-label small" for="node-${esc(n)}">${esc(n)}</label>
+    </div>`).join('');
+  
+  updateWizNodeTableHeader();
+  updateWizStudentTableNodes();
+}
+
+function toggleWizNode(node, checked) {
+  if (checked && !wizSelectedNodes.includes(node)) {
+    wizSelectedNodes.push(node);
+  } else if (!checked) {
+    wizSelectedNodes = wizSelectedNodes.filter(n => n !== node);
+  }
+  renderWizSelected();
+  updateWizNodeTableHeader();
+  updateWizStudentTableNodes();
+}
+
+function addWizCustomNode() {
+  const input = document.getElementById('wiz-custom-node');
+  const val = input.value.trim();
+  if (!val || val.length < 2) return;
+  if (wizSelectedNodes.includes(val)) { input.value = ''; return; }
+  wizSelectedNodes.push(val);
+  input.value = '';
+  renderWizSelected();
+  updateWizNodeTableHeader();
+  updateWizStudentTableNodes();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('wiz-custom-node')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') addWizCustomNode();
+  });
+  updateWizNodePresets();
+  addWizStudentRows(5);
+});
+
+function renderWizSelected() {
+  const div = document.getElementById('wiz-selected-nodes');
+  div.innerHTML = wizSelectedNodes.length
+    ? wizSelectedNodes.map((n,i) => `
+        <span class="weak-node-badge" style="cursor:pointer" onclick="removeWizNode(${i})" title="點擊移除">
+          ${esc(n)} ×
+        </span>`).join('')
+    : '<span class="text-muted small">（尚未選擇）</span>';
+}
+
+function removeWizNode(idx) {
+  const n = wizSelectedNodes[idx];
+  wizSelectedNodes.splice(idx, 1);
+  // Uncheck if it was a preset
+  const cb = document.getElementById('node-'+n);
+  if (cb) cb.checked = false;
+  renderWizSelected();
+  updateWizNodeTableHeader();
+  updateWizStudentTableNodes();
+}
+
+function updateWizNodeTableHeader() {
+  const th = document.getElementById('wiz-node-header');
+  if (!th) return;
+  if (!wizSelectedNodes.length) {
+    th.textContent = '弱點節點（請先在②選節點）';
+    return;
+  }
+  th.innerHTML = wizSelectedNodes.map(n => `<span class="weak-node-badge" style="font-size:.7rem;padding:2px 8px;">${esc(n)}</span>`).join(' ');
+}
+
+function updateWizStudentTableNodes() {
+  // Re-render all rows to have correct checkboxes
+  const tbody = document.getElementById('wiz-student-tbody');
+  const existingRows = [...tbody.querySelectorAll('tr')];
+  existingRows.forEach(row => {
+    const numInput  = row.querySelector('.wiz-num');
+    const nameInput = row.querySelector('.wiz-name');
+    const nodesCell = row.querySelector('.wiz-nodes-cell');
+    if (!nodesCell) return;
+    const checkedNodes = [...row.querySelectorAll('.wiz-node-cb:checked')].map(cb => cb.value);
+    nodesCell.innerHTML = wizSelectedNodes.length
+      ? wizSelectedNodes.map(n => `
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input wiz-node-cb" type="checkbox" value="${esc(n)}" ${checkedNodes.includes(n)?'checked':''}>
+            <label class="form-check-label" style="font-size:.8rem">${esc(n)}</label>
+          </div>`).join('')
+      : '<span class="text-muted small">先在②選節點</span>';
+  });
+}
+
+function addWizStudentRow() {
+  const tbody = document.getElementById('wiz-student-tbody');
+  const rowNum = tbody.querySelectorAll('tr').length + 1;
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="form-control form-control-sm wiz-num" value="${String(rowNum).padStart(2,'0')}" style="width:60px"></td>
+    <td><input type="text" class="form-control form-control-sm wiz-name" placeholder="姓名"></td>
+    <td class="wiz-nodes-cell">${wizSelectedNodes.length
+      ? wizSelectedNodes.map(n => `
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input wiz-node-cb" type="checkbox" value="${esc(n)}">
+            <label class="form-check-label" style="font-size:.8rem">${esc(n)}</label>
+          </div>`).join('')
+      : '<span class="text-muted small">先在②選節點</span>'
+    }</td>
+    <td><button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="this.closest('tr').remove()" style="font-size:.75rem">×</button></td>`;
+  tbody.appendChild(tr);
+}
+
+function addWizStudentRows(n) {
+  for (let i = 0; i < n; i++) addWizStudentRow();
+}
+
+function getWizStudentData() {
+  const rows = [...document.querySelectorAll('#wiz-student-tbody tr')];
+  return rows.map(row => {
+    const num   = row.querySelector('.wiz-num')?.value.trim()   || '';
+    const name  = row.querySelector('.wiz-name')?.value.trim()  || '';
+    const nodes = [...row.querySelectorAll('.wiz-node-cb:checked')].map(cb => cb.value);
+    return { number: num, name, weakNodes: nodes };
+  }).filter(s => s.number);
+}
+
+async function wizardInitDB() {
+  Swal.fire({ title:'初始化資料庫中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+  try {
+    const msg = await API.setupDatabase();
+    Swal.fire({ icon:'success', title:'初始化完成！', html: msg.replace(/\n/g,'<br>'), confirmButtonText:'確定' });
+  } catch(e) {
+    Swal.fire({ icon:'error', title:'初始化失敗', text: e.message,
+      footer:'請確認 GAS URL 正確，且部署設定為「所有人」可存取。' });
+  }
+}
+
+async function wizardCreateAndGenerate() {
+  const taskName = document.getElementById('wiz-task-name').value.trim();
+  const grade    = document.getElementById('wiz-grade').value;
+  const subject  = document.getElementById('wiz-subject').value;
+  const students = getWizStudentData();
+
+  if (!taskName)       return Swal.fire({ icon:'warning', title:'請填寫任務名稱' });
+  if (!wizSelectedNodes.length) return Swal.fire({ icon:'warning', title:'請在②至少選一個知識節點' });
+  if (!students.length) return Swal.fire({ icon:'warning', title:'請在③至少輸入一位學生的座號' });
+
+  // Summary
+  const summaryDiv = document.getElementById('wiz-summary');
+  summaryDiv.style.display = '';
+  summaryDiv.innerHTML = `準備建立：<b>${esc(taskName)}</b>（${grade}/${subject}）<br>
+    學生：<b>${students.length}</b> 人 ｜ 知識節點：<b>${wizSelectedNodes.length}</b> 個：
+    ${wizSelectedNodes.map(n=>`<span class="weak-node-badge">${esc(n)}</span>`).join('')}`;
+
+  const pArea = document.getElementById('wiz-progress-area');
+  const pBar  = document.getElementById('wiz-progress-bar');
+  const pMsg  = document.getElementById('wiz-progress-msg');
+  pArea.style.display = '';
+  pBar.style.width = '0%';
+  pMsg.textContent = '📤 上傳學生資料中…';
+
+  try {
+    await API.uploadTaskData(taskName, grade, subject, students, wizSelectedNodes);
+    pBar.style.width = '10%';
+    pMsg.textContent = '✅ 學生名冊儲存完成，開始 AI 出題…';
+
+    let geminiSettings = { isPaid: false };
+    try { geminiSettings = await API.getGeminiSettings(); } catch(e) {}
+    const delay = geminiSettings.isPaid ? 500 : 3000;
+
+    let batchIndex = 0;
+    while (true) {
+      const result = await API.generateBatch(wizSelectedNodes, grade, subject, batchIndex);
+      const pct = Math.min(95, Math.round(10 + (result.current / Math.max(result.total, 1)) * 85));
+      pBar.style.width = pct + '%';
+      pMsg.textContent = result.message;
+      if (result.done) break;
+      batchIndex++;
+      await sleep(delay);
+    }
+
+    pBar.style.width = '100%';
+    pMsg.textContent = '🎉 完成！學生現在可以登入開始測驗。';
+
+    app.taskList = await API.getTasks();
+    populateAdminTaskDropdowns();
+    loadTasksForLogin();
+
+    Swal.fire({
+      icon: 'success', title: '任務建立完成！',
+      html: `<b>${esc(taskName)}</b> 已完成出題。<br>學生可以在登入頁選擇此任務開始測驗。`,
+      confirmButtonText: '好的'
+    });
+  } catch(e) {
+    pMsg.innerHTML = `<span class="text-danger">❌ ${e.message}</span>`;
+    Swal.fire({ icon:'error', title:'建立失敗', text: e.message,
+      footer: '如為 Gemini 配額問題，稍候 1 分鐘再試；若是連線問題，請先確認 GAS URL 設定。' });
+  }
+}
+
+// ════════════════════════════════════════════════════
 // ⑱ 工具函式
 // ════════════════════════════════════════════════════
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
 </script>
 
 </body>
