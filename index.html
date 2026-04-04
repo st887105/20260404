@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v8.0)</title>
+  <title>車城國小｜因材網考古題學力檢測 AI 智慧補救系統 (v8.0)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -79,8 +79,8 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
 <!-- ===================== HEADER ===================== -->
 <header class="app-header" style="position:relative;">
   <div class="container text-center">
-    <h2 class="mb-1"><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
-    <p class="mb-0 opacity-75">階梯式出題 (Math 1-3-3-3 / Chinese 1-4-5)｜KaTeX 支援｜v8.0</p>
+    <h2 class="mb-1"><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜因材網考古題學力檢測 AI 智慧補救系統</h2>
+    <p class="mb-0 opacity-75">數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救（車城國小公開測試版本）</p>
   </div>
   <div style="position:absolute;top:10px;right:14px;">
     <button onclick="showGasUrlDialog()"
@@ -180,8 +180,7 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
                 <div class="col-6 col-md-4">
                   <label class="form-label fw-bold">年級</label>
                   <select id="task-grade" class="form-select">
-                    <option>一年級</option><option>二年級</option><option>三年級</option>
-                    <option>四年級</option><option>五年級</option><option>六年級</option>
+                    <option>三年級</option><option>四年級</option><option selected>五年級</option><option>六年級</option>
                   </select>
                 </div>
                 <div class="col-6 col-md-4">
@@ -196,7 +195,7 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
                   <label class="form-label fw-bold">上傳學生名冊與弱點節點 (Excel)</label>
                   <p class="text-muted small mb-1">格式：A欄=座號、B欄=姓名、C欄起=弱點知識節點（可多欄）</p>
                   <div class="alert alert-info py-1 px-2 small mb-0">
-                    <strong>出題策略：</strong>有錯誤率的節點 → 各出 3 題精準練習；「-」「0」「未診斷」節點 → 合併出 10 題通用基礎練習，確保學生至少有 10 題可作答。
+                    <strong>出題策略：</strong>有錯誤率的節點 → 各出 1 題精準練習；「-」「0」「未診斷」節點 → 合併出 10 題通用基礎練習，確保學生至少有 10 題可作答。
                   </div>
                   <input type="file" id="excel-file" class="form-control" accept=".xlsx,.xls" onchange="previewExcel()">
                 </div>
@@ -239,7 +238,7 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
 
                 <div class="col-12" id="folder-input-area" style="display:none;">
                   <label class="form-label fw-bold">Google Drive PDF 資料夾 ID</label>
-                  <input id="folder-id-input" type="text" class="form-control" placeholder="貼上資料夾 ID 或完整網址">
+                  <input id="folder-id-input" type="text" class="form-control" placeholder="貼上資料夾 ID 或完整網址（留空使用系統設定）">
                 </div>
 
                 <!-- 操作按鈕 -->
@@ -439,7 +438,7 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
 </main>
 
 <footer class="text-center mt-4">
-  車城國小學力檢測 AI 補救系統 v7.1 ｜ Powered by Google Apps Script &amp; Gemini AI
+  車城國小因材網考古題學力檢測 AI 補救系統 v8.0 ｜ Powered by Google Apps Script &amp; GitHub
 </footer>
 
 <!-- ===================== JavaScript ===================== -->
@@ -568,8 +567,14 @@ const API = {
 
 // ─── 初始化 ─────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  // GAS_URL 已在全域變數初始化時從 localStorage 讀取
   loadTasks();
+  // ★ 自動載入已儲存的資料夾 ID（頁面載入時預填）
+  API.getFolderId().then(id => {
+    if (id) {
+      const el = document.getElementById('folder-id-input');
+      if (el && !el.value) el.value = id;
+    }
+  }).catch(() => {});
 });
 
 async function loadTasks() {
@@ -700,6 +705,26 @@ async function populateTaskSelects() {
 function previewExcel() {
   const file = document.getElementById('excel-file').files[0];
   if (!file) return;
+
+  // ★ 從檔名自動偵測年級與科目
+  const fname = file.name;
+  const gradeMap = { '三': '三年級', '四': '四年級', '五': '五年級', '六': '六年級' };
+  const subjectMap = { '數學': '數學', '國語': '國語', '語文': '國語' };
+  const gradeEl   = document.getElementById('task-grade');
+  const subjectEl = document.getElementById('task-subject');
+  for (const [key, val] of Object.entries(gradeMap)) {
+    if (fname.includes(key + '年') || fname.includes(key + '年級')) {
+      gradeEl.value = val; break;
+    }
+  }
+  for (const [key, val] of Object.entries(subjectMap)) {
+    if (fname.includes(key)) { subjectEl.value = val; break; }
+  }
+  // 自動帶入任務名稱（若未填）
+  const taskEl = document.getElementById('task-name');
+  if (!taskEl.value.trim()) {
+    taskEl.value = fname.replace(/\.xlsx?$/i, '').substring(0, 40);
+  }
   const reader = new FileReader();
   reader.onload = (ev) => {
     const wb   = XLSX.read(ev.target.result, { type:'array' });
@@ -741,7 +766,15 @@ function previewExcel() {
 // ─── 後台：切換資料夾輸入 ───────────────────────────────────
 function toggleFolderInput() {
   const mode = document.querySelector('input[name="gen-mode"]:checked').value;
-  document.getElementById('folder-input-area').style.display = (mode !== 'ai') ? '' : 'none';
+  const area = document.getElementById('folder-input-area');
+  area.style.display = (mode !== 'ai') ? '' : 'none';
+  // ★ 若切換到 PDF/混合模式且輸入框空白，自動填入已儲存的 ID
+  if (mode !== 'ai') {
+    const el = document.getElementById('folder-id-input');
+    if (el && !el.value.trim()) {
+      API.getFolderId().then(id => { if (id) el.value = id; }).catch(() => {});
+    }
+  }
 }
 
 // ─── 後台：上傳並出題 ───────────────────────────────────────
@@ -1220,27 +1253,59 @@ async function genWorksheet() {
   const nodes = JSON.parse(area.dataset.nodes || '[]');
   const task  = tasks.find(t => t.taskName === document.getElementById('analysis-task').value);
   if (!nodes.length) return;
+
+  // ★ 只取 Top 1 弱點節點（省時省配額），讓使用者知道
+  const targetNode = nodes[0];
+  const ok = await Swal.fire({
+    icon: 'question', title: '📄 生成差異化學習單',
+    html: '<div class="text-start small">' +
+          '<p>將針對弱點節點「<strong>' + targetNode + '</strong>」生成 A4 學習單。</p>' +
+          '<p>⏱️ 預計時間：<strong>30 秒 ~ 2 分鐘</strong></p>' +
+          '<p class="text-muted mb-0">GAS 執行有時間限制，每次生成 1 個節點確保品質。</p>' +
+          '</div>',
+    showCancelButton: true, confirmButtonText: '開始生成', cancelButtonText: '取消'
+  });
+  if (!ok.isConfirmed) return;
+
+  // 倒數計時顯示
+  let elapsed = 0;
+  const timer = setInterval(() => { elapsed++; }, 1000);
   Swal.fire({
     title: 'AI 生成差異化學習單',
-    html: '正在生成中，最多嘗試 3 種模型…<br><small class="text-muted">若出現配額錯誤會自動切換備援模型</small>',
+    html: '正在生成中，最多嘗試 4 種模型…<br>' +
+          '<small class="text-muted">若配額不足會自動切換備援模型</small><br>' +
+          '<div id="ws-timer" class="mt-2 text-info fw-bold">已等待 0 秒</div>',
     allowOutsideClick: false,
-    didOpen: () => Swal.showLoading()
+    didOpen: () => {
+      Swal.showLoading();
+      const wsTimer = setInterval(() => {
+        const el = document.getElementById('ws-timer');
+        if (el) el.textContent = '已等待 ' + elapsed + ' 秒';
+        else clearInterval(wsTimer);
+      }, 1000);
+    }
   });
   try {
-    const html = await API.generateTeachingWorksheet(nodes, task?.grade || '', task?.subject || '');
+    const html = await API.generateTeachingWorksheet([targetNode], task?.grade || '', task?.subject || '');
+    clearInterval(timer);
     Swal.close();
     const win = window.open('', '_blank');
     if (!win) { Swal.fire('提示', '請允許彈出視窗以查看學習單', 'info'); return; }
     win.document.write(html);
     win.document.close();
   } catch(e) {
-    const isQuota = e.message.includes('配額') || e.message.includes('quota');
+    clearInterval(timer);
+    const isQuota = e.message.includes('配額') || e.message.includes('quota') || e.message.includes('RESOURCE_EXHAUSTED');
+    const isTimeout = e.message.includes('timeout') || e.message.includes('Deadline');
     Swal.fire({
       icon: 'error',
-      title: isQuota ? '⏳ API 配額已滿' : '生成失敗',
-      html: isQuota
-        ? '<p>' + e.message + '</p><p class="text-muted small mt-2">建議：等待約 1 分鐘後重試，或至 Google AI Studio 確認配額狀態。</p>'
-        : e.message
+      title: isTimeout ? '⏰ GAS 執行超時' : isQuota ? '⏳ API 配額已滿' : '生成失敗',
+      html: '<p>' + e.message.substring(0, 200) + '</p>' +
+            '<p class="text-muted small mt-2">' +
+            (isTimeout ? '學習單內容較多，建議：減少弱點節點數量或稍後重試。' :
+             isQuota   ? '等待約 1 分鐘後重試，系統會自動切換備援模型。' :
+                         '請稍後重試或聯繫管理員。') +
+            '</p>'
     });
   }
 }
