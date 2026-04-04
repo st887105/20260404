@@ -73,7 +73,7 @@
 
 <!-- GAS Web App URL -->
 <script>
-const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvgu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvqu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
 </script>
 
 <!-- ===================== HEADER ===================== -->
@@ -189,6 +189,9 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh
                 <div class="col-12">
                   <label class="form-label fw-bold">上傳學生名冊與弱點節點 (Excel)</label>
                   <p class="text-muted small mb-1">格式：A欄=座號、B欄=姓名、C欄起=弱點知識節點（可多欄）</p>
+                  <div class="alert alert-info py-1 px-2 small mb-0">
+                    <strong>出題策略：</strong>有錯誤率的節點 → 各出 3 題精準練習；「-」「0」「未診斷」節點 → 合併出 10 題通用基礎練習，確保學生至少有 10 題可作答。
+                  </div>
                   <input type="file" id="excel-file" class="form-control" accept=".xlsx,.xls" onchange="previewExcel()">
                 </div>
 
@@ -513,6 +516,7 @@ const API = {
   generateTeachingWorksheet:(nodes,g,s)  => callAPI('generateTeachingWorksheet', { topNodes:nodes, grade:g, subject:s }),
   getSimilarQuestions:          (node,g,s,l)  => callAPI('getSimilarQuestions', { node, grade:g, subject:s, limit:l }),
   getTaskQuestions:             (taskName)    => callAPI('getTaskQuestions', { taskName }),
+  regenerateBatchForTask:       (taskName,idx,mode,fid) => callAPI('regenerateBatchForTask', { taskName, batchIndex:idx, mode, folderId:fid }),
   getPracticeQuestionsForErrors:(taskName)    => callAPI('getPracticeQuestionsForErrors', { taskName }),
   updateSystemPrompts:          (m,c,mw,cw,p) => callAPI('updateSystemPrompts', { mathPrompt:m, chinesePrompt:c, mathWorksheetPrompt:mw, chineseWorksheetPrompt:cw, pwd:p }),
 };
@@ -717,6 +721,11 @@ async function uploadAndGenerate() {
       } else {
         result = await API.generateBatchFromFolder(folderId, uniqueNodes, grade, subject, batchIndex, mode);
       }
+      // 顯示更清楚的說明
+      if (result.message) {
+        const isGeneral = result.message.includes('通用練習');
+        progressMsg.style.color = isGeneral ? '#e65100' : '#1b5e20';
+      }
       const pct = Math.round((result.current / result.total) * 100);
       progressBar.style.width = pct + '%';
       progressMsg.textContent = result.message;
@@ -753,28 +762,85 @@ async function clearNodeBank() {
   } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
 }
 
-// ─── 後台：題庫管理（含題目列表）────────────────────────────
-let bankCurrentTask = '';
+// ─── 後台：題庫管理（含重新出題）────────────────────────────
 async function loadBankStatus() {
   const area = document.getElementById('bank-status');
   area.innerHTML = '<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm"></div><span>載入中...</span></div>';
   try {
     const taskList = await API.getTasks();
     if (!taskList.length) { area.innerHTML = '<p class="text-muted">尚無任務，請先建立任務並出題。</p>'; return; }
-
-    const taskOpts = '<option value="">-- 選擇任務查看題目 --</option>' +
+    const taskOpts = '<option value="">-- 選擇任務 --</option>' +
       taskList.map(t => '<option value="' + t.taskName + '">' + t.taskName + '（' + t.grade + ' ' + t.subject + '）</option>').join('');
-
     area.innerHTML =
-      '<div class="row g-2 mb-3">' +
-        '<div class="col-12 col-md-6">' +
+      '<div class="row g-2 mb-3 align-items-end">' +
+        '<div class="col-12 col-md-5">' +
           '<label class="form-label fw-bold">選擇任務</label>' +
           '<select class="form-select" id="bank-task-sel" onchange="loadBankQuestions()">' + taskOpts + '</select>' +
         '</div>' +
+        '<div class="col-12 col-md-5">' +
+          '<label class="form-label fw-bold">重新出題模式</label>' +
+          '<select class="form-select" id="bank-regen-mode">' +
+            '<option value="ai">純 AI 生成</option>' +
+            '<option value="pdf">依 PDF 教材出題</option>' +
+            '<option value="mixed">混合模式</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="col-12 col-md-2">' +
+          '<button class="btn btn-warning w-100" onclick="startRegenerate()">' +
+            '<i class="fa-solid fa-rotate me-1"></i>重新出題' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="bank-regen-progress" style="display:none;" class="mb-3">' +
+        '<div class="progress mb-1" style="height:8px"><div id="bank-regen-bar" class="progress-bar bg-warning progress-bar-striped progress-bar-animated" style="width:0%"></div></div>' +
+        '<div id="bank-regen-msg" class="text-muted small"></div>' +
       '</div>' +
       '<div id="bank-questions-area"><p class="text-muted small">請選擇任務以檢視題目。</p></div>';
   } catch(e) {
     area.innerHTML = '<div class="text-danger">載入失敗：' + e.message + '</div>';
+  }
+}
+
+// ─── 重新出題（題庫管理）────────────────────────────────────
+async function startRegenerate() {
+  const taskName = document.getElementById('bank-task-sel').value;
+  const mode     = document.getElementById('bank-regen-mode').value;
+  if (!taskName) { Swal.fire('提示','請先選擇任務','warning'); return; }
+
+  const cfg  = await API.getFolderId();
+  const folderId = (mode!=='ai') ? (cfg||'') : '';
+
+  const confirm = await Swal.fire({
+    title: '確認重新出題',
+    html: '將為任務「'+taskName+'」重新生成題目<br><small class="text-muted">（不會清除已有題目，若需清空請先點「清空此批節點題庫」）</small>',
+    icon: 'question', showCancelButton: true,
+    confirmButtonText: '開始出題', cancelButtonText: '取消'
+  });
+  if (!confirm.isConfirmed) return;
+
+  const progressDiv = document.getElementById('bank-regen-progress');
+  const bar         = document.getElementById('bank-regen-bar');
+  const msg         = document.getElementById('bank-regen-msg');
+  progressDiv.style.display = '';
+
+  let batchIndex = 0;
+  while (true) {
+    try {
+      const result = await API.regenerateBatchForTask(taskName, batchIndex, mode, folderId);
+      const pct    = Math.round((result.current / result.total) * 100);
+      bar.style.width = pct + '%';
+      msg.textContent = result.message;
+      if (result.done) {
+        Swal.fire('✅ 完成','重新出題完成！共 '+result.total+' 批次。','success');
+        loadBankQuestions();
+        break;
+      }
+      batchIndex++;
+      await new Promise(r => setTimeout(r, 800));
+    } catch(e) {
+      Swal.fire('出題錯誤', e.message, 'error');
+      break;
+    }
   }
 }
 
