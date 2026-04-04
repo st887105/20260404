@@ -828,9 +828,10 @@ async function uploadAndGenerate() {
   const validCount   = uniqueNodes.filter(_isValidNode).length;
   const invalidCount = uniqueNodes.length - validCount;
   const totalBatches = validCount + (invalidCount>0?1:0);
-  const estLow  = Math.ceil(totalBatches*12/60);
-  const estHigh = Math.ceil(totalBatches*20/60);
-  const estText = (estLow===estHigh?estLow:estLow+'~'+estHigh)+'分鐘';
+  // 每批約 6~10 秒（含 5 秒限流 + API 處理時間）
+  const estLow  = Math.ceil(totalBatches * 6 / 60);
+  const estHigh = Math.ceil(totalBatches * 10 / 60);
+  const estText = (estLow === estHigh ? estLow : estLow + '~' + estHigh) + '分鐘';
 
   const ok = await Swal.fire({ icon:'question', title:'📋 確認出題資訊',
     html: '<div class="text-start small">' +
