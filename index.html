@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v7.1)</title>
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v8.0)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -745,59 +745,133 @@ function toggleFolderInput() {
 }
 
 // ─── 後台：上傳並出題 ───────────────────────────────────────
+// ★ 防呆鎖定旗標
+let _isGenerating = false;
+let _msgTimer = null;
+
+const _genTips = [
+  '☕ 正在幫孩子們準備題目，稍等一下哦！',
+  '🤔 AI 正認真思考每一道好題目中…',
+  '📚 題目品質比速度更重要，感謝耐心！',
+  '🎯 每道題都針對弱點設計，快好了！',
+  '🍵 泡杯茶放輕鬆，AI 還在努力中…',
+  '🌟 快完成了！感謝你的耐心等待！',
+];
+
+function _startTips(el) {
+  let i = 0;
+  _msgTimer = setInterval(() => {
+    const tip = document.getElementById('gen-tip-span');
+    if (tip) tip.textContent = _genTips[i++ % _genTips.length];
+  }, 9000);
+}
+function _stopTips() { if(_msgTimer){clearInterval(_msgTimer);_msgTimer=null;} }
+
+function _isValidNode(n) {
+  const s=String(n||'').trim();
+  return s&&s!=='-'&&s!=='0'&&s!=='未診斷'&&s!=='未精熟'&&s!=='未作答';
+}
+
 async function uploadAndGenerate() {
+  if (_isGenerating) {
+    Swal.fire({ icon:'info', title:'⏳ 出題進行中',
+      html:'<p>系統正在為您出題，請耐心等待。</p><p class="text-muted small">重複點擊不會加速，請等待目前批次完成！</p>',
+      confirmButtonText:'好的，繼續等待' });
+    return;
+  }
+
   const taskName = document.getElementById('task-name').value.trim();
   const grade    = document.getElementById('task-grade').value;
   const subject  = document.getElementById('task-subject').value;
   const mode     = document.querySelector('input[name="gen-mode"]:checked').value;
   const folderId = document.getElementById('folder-id-input').value.trim().split('?')[0];
 
-  if (!taskName)         { Swal.fire('提示','請輸入任務名稱','warning'); return; }
-  if (!parsedExcelData)  { Swal.fire('提示','請先上傳 Excel 學生名冊','warning'); return; }
+  if (!taskName)        { Swal.fire('提示','請輸入任務名稱','warning'); return; }
+  if (!parsedExcelData) { Swal.fire('提示','請先上傳 Excel 學生名冊','warning'); return; }
 
-  const uniqueNodes = [...new Set(parsedExcelData.flatMap(s => s.weakNodes))].filter(n=>n);
-  if (uniqueNodes.length === 0) { Swal.fire('提示','Excel 中沒有偵測到弱點節點（C欄以後）','warning'); return; }
+  const uniqueNodes  = [...new Set(parsedExcelData.flatMap(s=>s.weakNodes))].filter(n=>n);
+  if (!uniqueNodes.length) { Swal.fire('提示','Excel 中沒有偵測到弱點節點（C欄以後）','warning'); return; }
 
-  Swal.fire({ title:'上傳學生資料…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
-  try {
-    await API.uploadTaskData(taskName, grade, subject, parsedExcelData, uniqueNodes);
-    Swal.close();
-  } catch(e) { Swal.fire('錯誤', e.message, 'error'); return; }
+  const validCount   = uniqueNodes.filter(_isValidNode).length;
+  const invalidCount = uniqueNodes.length - validCount;
+  const totalBatches = validCount + (invalidCount>0?1:0);
+  const estLow  = Math.ceil(totalBatches*12/60);
+  const estHigh = Math.ceil(totalBatches*20/60);
+  const estText = (estLow===estHigh?estLow:estLow+'~'+estHigh)+'分鐘';
 
-  // 開始批次出題
-  const progressArea = document.getElementById('gen-progress-area');
-  const progressBar  = document.getElementById('gen-progress-bar');
-  const progressMsg  = document.getElementById('gen-progress-msg');
-  progressArea.style.display = '';
+  const ok = await Swal.fire({ icon:'question', title:'📋 確認出題資訊',
+    html: '<div class="text-start small">' +
+      '<p>📌 任務：<strong>'+taskName+'</strong></p>' +
+      '<p>📌 年級科目：<strong>'+grade+' '+subject+'</strong></p>' +
+      '<p>📌 學生人數：<strong>'+parsedExcelData.length+' 人</strong></p>' +
+      '<p>📌 有效弱點節點：<strong>'+validCount+' 個</strong>（各出 1 題精準練習）</p>' +
+      '<p>📌 未診斷節點：<strong>'+invalidCount+' 個</strong>（合併出 10 題通用練習）</p>' +
+      '<p>⏱ 預計時間：<strong>'+estText+'</strong>（共 '+totalBatches+' 批）</p>' +
+      '<p class="text-danger mb-0 mt-1">⚠️ 出題期間請勿關閉或重新整理頁面</p>' +
+    '</div>',
+    showCancelButton:true, confirmButtonText:'🚀 開始出題', cancelButtonText:'再看一下' });
+  if (!ok.isConfirmed) return;
 
-  let batchIndex = 0;
-  while (true) {
+  Swal.fire({ title:'📤 上傳學生資料中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+  try { await API.uploadTaskData(taskName,grade,subject,parsedExcelData,uniqueNodes); Swal.close(); }
+  catch(e) { Swal.fire('錯誤',e.message,'error'); return; }
+
+  _isGenerating = true;
+  const genBtn = document.querySelector('[onclick="uploadAndGenerate()"]');
+  if (genBtn) { genBtn.disabled=true; genBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin me-1"></i>出題中，請勿重複點擊'; }
+
+  const pArea = document.getElementById('gen-progress-area');
+  const pBar  = document.getElementById('gen-progress-bar');
+  const pMsg  = document.getElementById('gen-progress-msg');
+  pArea.style.display='';
+  pMsg.innerHTML='準備開始出題… <span id="gen-tip-span" class="text-info small">'+_genTips[0]+'</span>';
+  _startTips(pMsg);
+
+  let batchIdx=0, errCnt=0; const MAX_ERR=3; const t0=Date.now();
+
+  while(true) {
     try {
-      let result;
-      if (mode === 'ai') {
-        result = await API.generateBatch(uniqueNodes, grade, subject, batchIndex);
-      } else {
-        result = await API.generateBatchFromFolder(folderId, uniqueNodes, grade, subject, batchIndex, mode);
-      }
-      // 顯示更清楚的說明
-      if (result.message) {
-        const isGeneral = result.message.includes('通用練習');
-        progressMsg.style.color = isGeneral ? '#e65100' : '#1b5e20';
-      }
-      const pct = Math.round((result.current / result.total) * 100);
-      progressBar.style.width = pct + '%';
-      progressMsg.textContent = result.message;
+      const result = mode==='ai'
+        ? await API.generateBatch(uniqueNodes,grade,subject,batchIdx)
+        : await API.generateBatchFromFolder(folderId,uniqueNodes,grade,subject,batchIdx,mode);
+
+      const pct    = Math.round((result.current/result.total)*100);
+      const elap   = Math.round((Date.now()-t0)/1000);
+      const remain = result.current>0 ? Math.round((elap/result.current)*(result.total-result.current)) : 0;
+      const remTxt = remain>=60 ? Math.floor(remain/60)+'分'+remain%60+'秒' : remain+'秒';
+      pBar.style.width=pct+'%'; pBar.textContent=pct+'%';
+      const clr = (result.message||'').includes('通用練習')?'#e65100':'#1b5e20';
+      pMsg.innerHTML='<span style="color:'+clr+'">'+result.message+'</span>'+
+        '　<span class="text-muted small">剩餘約 '+remTxt+'</span>'+
+        '　<span id="gen-tip-span" class="text-info small"></span>';
+      errCnt=0;
 
       if (result.done) {
-        Swal.fire('🎉 完成！', `任務「${taskName}」已建立，共出題完畢！`, 'success');
-        loadTasks();
+        _stopTips(); _isGenerating=false;
+        if(genBtn){genBtn.disabled=false;genBtn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles me-1"></i>上傳並開始出題';}
+        const total=Math.round((Date.now()-t0)/1000);
+        pBar.style.width='100%'; pBar.textContent='100%';
+        Swal.fire({ icon:'success', title:'🎉 出題完成！',
+          html:'<p>任務「<strong>'+taskName+'</strong>」建立成功！</p>'+
+               '<p>共完成 <strong>'+result.total+'</strong> 批，耗時 <strong>'+(total>=60?Math.floor(total/60)+'分':'')+total%60+'秒</strong></p>'+
+               '<p class="text-muted small">學生現在可以登入作答囉 🎓</p>' });
+        loadTasks(); break;
+      }
+      batchIdx++;
+      await new Promise(r=>setTimeout(r,2000));  // 2秒間隔，配合 GAS 端的限流設定
+    } catch(e) {
+      errCnt++;
+      if (errCnt>=MAX_ERR) {
+        _stopTips(); _isGenerating=false;
+        if(genBtn){genBtn.disabled=false;genBtn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles me-1"></i>上傳並開始出題';}
+        Swal.fire({ icon:'error', title:'出題中斷',
+          html:'<p>'+e.message+'</p>'+
+               '<p class="text-muted small">已完成 <strong>'+batchIdx+'/'+totalBatches+'</strong> 批。'+
+               '可稍後至「題庫管理」點「重新出題」繼續。</p>' });
         break;
       }
-      batchIndex++;
-      await new Promise(r => setTimeout(r, 800)); // 避免 API 過快
-    } catch(e) {
-      Swal.fire('出題錯誤', e.message, 'error');
-      break;
+      pMsg.innerHTML='<span class="text-warning">⚠️ 第'+batchIdx+'批遇到問題，15秒後自動重試（'+errCnt+'/'+MAX_ERR+'）…</span>';
+      await new Promise(r=>setTimeout(r,15000));
     }
   }
 }
