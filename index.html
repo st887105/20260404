@@ -67,8 +67,7 @@
     .err-fill{height:100%;border-radius:4px;transition:width .6s;}
 
     /* ══════════════════════════════════════════
-       ① FIXED: 計算紙 — 使用 .is-open class 控制，
-         無須 event 參數。iOS 安全區 + user-select 修正。
+       ① 計算紙 — .is-open class 控制，iOS 安全區
     ══════════════════════════════════════════ */
     #scratch-btn{
       position:fixed;bottom:80px;right:18px;z-index:1000;
@@ -77,14 +76,14 @@
       box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;
       display:none;align-items:center;justify-content:center;
     }
-    /* 用 visibility+opacity 控制動畫，不切 display:flex/none */
+    /* visibility+opacity 控制動畫，不切 display */
     #scratch-modal{
       position:fixed;inset:0;z-index:1050;
       background:rgba(0,0,0,.45);
       display:flex;align-items:flex-end;justify-content:center;
       visibility:hidden;opacity:0;
       transition:opacity .22s,visibility .22s;
-      cursor:pointer; /* 點背景可關閉 */
+      cursor:pointer;
     }
     #scratch-modal.is-open{visibility:visible;opacity:1;}
     #scratch-inner{
@@ -100,25 +99,25 @@
     #scratch-pad{
       flex:1;resize:none;border:2px solid #e0e0e0;border-radius:10px;
       padding:12px;font-size:1rem;min-height:220px;
-      /* iOS Safari：明確宣告才能在 modal 內正常聚焦 + 輸入 */
+      /* iOS Safari 明確宣告才能在 modal 內正常聚焦 + 輸入 */
       -webkit-user-select:text!important;
       user-select:text!important;
       pointer-events:all;
-      touch-action:auto;          /* 允許觸控滾動 */
+      touch-action:auto;
       -webkit-overflow-scrolling:touch;
       cursor:text;
     }
     #scratch-pad:focus{border-color:var(--primary);outline:none;}
 
     /* ══════════════════════════════════════════
-       ② FIXED: 學習單 iframe RWD
-         — wrapper 設 overflow:auto 讓 iOS Safari 可捲動
-         — 不使用 height:100%（iOS iframe 不認）
+       ② 學習單 iframe RWD（修正：不使用 height:100%）
+       wrapper 設 overflow:auto 讓 iOS Safari 可捲動
     ══════════════════════════════════════════ */
     #ws-preview-area{
-      border-radius:12px;overflow:hidden;margin-top:12px;
+      border-radius:12px;
+      margin-top:12px;
       border:1px solid #e0e0e0;
-      /* iOS Safari: 必須在 wrapper 宣告，iframe 才能內部捲動 */
+      /* iOS Safari: wrapper 宣告後 iframe 才能內部捲動 */
       -webkit-overflow-scrolling:touch;
       overflow:auto;
     }
@@ -126,14 +125,12 @@
       width:100%;
       height:75vh;
       min-height:500px;
-      border:none;display:block;
-      /* iOS 13+: 允許 iframe 內容捲動 */
+      border:none;
+      display:block;
       overflow:auto;
     }
 
-    /* ══════════════════════════════════════════
-       ③ FIXED: 隱藏列印用 iframe（預先掛 DOM）
-    ══════════════════════════════════════════ */
+    /* ③ 隱藏列印用 iframe（預先掛 DOM） */
     #hidden-print-frame{
       position:fixed;left:-9999px;top:-9999px;
       width:210mm;height:297mm;border:none;
@@ -141,24 +138,19 @@
     }
 
     /* ══════════════════════════════════════════
-       ③ FIXED: @media print — 教師版/學生版分離
-         透過 body.print-student / body.print-teacher 切換
+       ③ @media print — 教師版/學生版分離
     ══════════════════════════════════════════ */
     @media print {
-      /* 隱藏系統 UI */
       header.app-header, footer, #scratch-btn,
       #scratch-modal, #hidden-print-frame,
       .btn:not(.print-keep), nav, .nav-tabs,
       #ws-gen-progress, #ws-buttons { display:none!important; }
 
-      /* 讓列印內容佔滿 */
       body, main { background:#fff!important; }
 
-      /* 防止表格/題目被截斷到下一頁 */
       .ws-question, .card, table { page-break-inside:avoid; break-inside:avoid; }
       h1,h2,h3,h4 { page-break-after:avoid; break-after:avoid; }
 
-      /* 預覽 iframe 列印時展開 */
       #ws-preview-frame { height:auto!important; }
     }
 
@@ -170,11 +162,9 @@
       #ws-preview-frame{height:60vh;min-height:360px;}
     }
 
-    /* Table hover */
     .table-hover tbody tr:hover{background:#e3f2fd;}
     .result-detail-row{background:#fafafa!important;}
 
-    /* Animate */
     @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
     .fade-in{animation:fadeIn .35s ease;}
 
@@ -196,7 +186,7 @@
   </div>
 </header>
 
-<!-- ③ 隱藏列印 iframe（預先掛 DOM，printWorksheet 直接寫入，不需 window.open） -->
+<!-- ③ 隱藏列印 iframe -->
 <iframe id="hidden-print-frame" title="列印用框架" aria-hidden="true" tabindex="-1"></iframe>
 
 <!-- ① 計算紙按鈕 -->
@@ -204,7 +194,7 @@
   <i class="fa-solid fa-pen-to-square"></i>
 </button>
 
-<!-- ① 計算紙 Modal — onclick 改由 JS addEventListener 管理，避免 iOS 事件問題 -->
+<!-- ① 計算紙 Modal -->
 <div id="scratch-modal" role="dialog" aria-modal="true" aria-label="計算紙">
   <div id="scratch-inner">
     <div class="d-flex justify-content-between align-items-center mb-2">
@@ -215,7 +205,6 @@
         <button class="btn btn-outline-secondary btn-sm" onclick="closeScratch()">收起</button>
       </div>
     </div>
-    <!-- autocomplete/autocorrect/autocapitalize：改善 iOS 輸入體驗 -->
     <textarea id="scratch-pad"
       placeholder="在這裡進行計算草稿…"
       autocomplete="off" autocorrect="off"
@@ -305,7 +294,7 @@
                 </div>
                 <div class="table-responsive" style="max-height:280px;overflow-y:auto;">
                   <table class="table table-sm table-bordered mb-0" id="wiz-student-table">
-                    <thead class="table-primary sticky-top"><tr><th style="width:80px">座號</th><th style="width:100px">姓名</th><th id="wiz-node-header">弱點節點（請先在②選節點）</th><th style="width:36px"></th></tr></thead>
+                    <thead class="table-primary sticky-top"><tr><th style="width:80px">座號</th><th style="width:100px">姓名</th><th id="wiz-node-header">弱點節點</th><th style="width:36px"></th></tr></thead>
                     <tbody id="wiz-student-tbody"></tbody>
                   </table>
                 </div>
@@ -332,7 +321,7 @@
                 <div class="col-6 col-md-4"><label class="form-label fw-bold small">科目</label><select id="task-subject" class="form-select"><option>數學</option><option>國語</option></select></div>
                 <div class="col-12">
                   <label class="form-label fw-bold small">上傳學生名冊 (Excel)</label>
-                  <div class="alert alert-primary py-2 px-3 small mb-2"><b>📋 格式：</b>A欄=座號、B欄=姓名、C欄起=弱點知識節點名稱<br><span class="text-danger">⚠️ 勿直接上傳因材網原始分數 Excel</span></div>
+                  <div class="alert alert-primary py-2 px-3 small mb-2"><b>📋 格式：</b>A欄=座號、B欄=姓名、C欄起=弱點知識節點名稱</div>
                   <input type="file" id="excel-file" class="form-control" accept=".xlsx,.xls,.csv" onchange="previewExcel()">
                 </div>
                 <div class="col-12" id="excel-preview-area" style="display:none;">
@@ -386,15 +375,14 @@
                     <div class="progress quiz-progress mb-1"><div id="ws-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width:0%"></div></div>
                     <span id="ws-progress-msg" class="text-muted small">生成中…</span>
                   </div>
-                  <!-- ③ FIXED: 列印按鈕 — 透過隱藏 iframe，不需 window.open -->
+                  <!-- ③ 列印按鈕 — 透過隱藏 iframe，不需 window.open -->
                   <div id="ws-buttons" style="display:none;" class="d-flex gap-2 flex-wrap mt-2">
                     <button class="btn btn-success btn-sm" onclick="printWorksheet('teacher')"><i class="fa-solid fa-print me-1"></i>教師版（含解答）</button>
                     <button class="btn btn-outline-primary btn-sm" onclick="printWorksheet('student')"><i class="fa-solid fa-print me-1"></i>學生版（無解答）</button>
                   </div>
-                  <!-- ② FIXED: iframe 預覽 — wrapper 加 overflow:auto 供 iOS 捲動 -->
-                  <div id="ws-preview-area" style="display:none;" class="mt-2">
-                    <iframe id="ws-preview-frame" title="差異化學習單預覽"
-                      scrolling="yes"></iframe>
+                  <!-- ② iframe 預覽 -->
+                  <div id="ws-preview-area" style="display:none;">
+                    <iframe id="ws-preview-frame" title="差異化學習單預覽" scrolling="yes"></iframe>
                   </div>
                 </div>
               </div>
@@ -568,17 +556,17 @@ window.addEventListener('DOMContentLoaded',()=>{
   updateWizNodePresets();
   addWizStudentRows(5);
 
-  /* ① FIXED: 計算紙背景關閉 — JS 管理，而非 HTML onclick
-     這樣在 Android/iOS touchend 事件也能正確觸發 */
+  /* ① FIXED: 計算紙背景關閉 — JS addEventListener 管理 */
   const modal = document.getElementById('scratch-modal');
   const inner = document.getElementById('scratch-inner');
+
   // 點背景（modal）時關閉；點 inner 內部不關閉
-  modal.addEventListener('click', e=>{ if(!inner.contains(e.target)) closeScratch(); });
-  // iOS Safari 需要額外監聽 touchend（passive 不阻止滾動）
-  modal.addEventListener('touchend', e=>{ if(!inner.contains(e.target)) closeScratch(); },{passive:true});
-  // 阻止 inner 的事件冒泡到 modal（讓 modal click 只觸發背景點擊）
-  inner.addEventListener('click', e=>e.stopPropagation());
-  inner.addEventListener('touchend', e=>e.stopPropagation(),{passive:true});
+  modal.addEventListener('click', e => { if(!inner.contains(e.target)) closeScratch(); });
+  // iOS Safari 額外監聽 touchend
+  modal.addEventListener('touchend', e => { if(!inner.contains(e.target)) closeScratch(); }, {passive:true});
+  // 阻止 inner 冒泡到 modal
+  inner.addEventListener('click', e => e.stopPropagation());
+  inner.addEventListener('touchend', e => e.stopPropagation(), {passive:true});
 });
 
 async function loadTasksForLogin(){
@@ -592,68 +580,77 @@ async function loadTasksForLogin(){
     msg.textContent='';
   }catch(e){
     sel.innerHTML='<option value="">-- 連線失敗 --</option>';
-    msg.innerHTML=`<span class="text-danger">無法連線 GAS：${e.message}。請點右上角「GAS 網址」確認設定。</span>`;
+    msg.innerHTML=`<span class="text-danger">無法連線 GAS：${e.message}</span>`;
   }
 }
 
 /* ════════════════════════════════════════════════
-   ① FIXED: 姓名去識別化 — 完整 Root Cause 修正版
+   ① 姓名去識別化（Root Cause 完整修正版）
    ─────────────────────────────────────────────
-   問題根源（截圖分析）：
-     GAS Students 表中 r[1]（號碼欄）包含整筆資料
-     如「4年 1班 3號 陳勝文 2」，r[2]（姓名欄）為空。
-     formatStudentLabel 收到 name='' 時直接回傳 number
-     原始字串，導致完整姓名曝露。
+   Root Cause（截圖確認）：
+   1. GAS Students 表的 name 欄包含「龔家堂 2」
+      （姓名 + 空格 + 弱點數量），trailing 數字
+      導致 anonymizeName 無法正確識別純姓名長度。
+   2. 原版用 \p{P}\p{S}（Unicode property escapes）
+      在部分環境下行為不穩定，改用簡單正規式。
 
-   修正策略（雙層防禦）：
-   Layer 1 — anonymizeName()：加強對各種邊界值的處理
-   Layer 2 — formatStudentLabel()：當 name 欄為空時，
-             用 Regex 從 number 欄提取中文姓名後再匿名化
+   修正策略：
+   Layer 0 — anonymizeName：先用 /\s*\d+\s*$/ 剝離
+             trailing 數字，再做匿名化。
+   Layer 2 — formatStudentLabel：name 欄空白時，
+             從 number 欄用 Regex 提取中文姓名。
 ════════════════════════════════════════════════ */
 
 /**
- * 將姓名中間字替換為○
- * @param {string} name - 原始姓名（可含空格或尾部數字）
- * @returns {string}    - 去識別化後的姓名
+ * 將姓名匿名化：首末字保留，中間換成○
+ * @param {string} name - 原始姓名（可含尾部空格或數字）
+ * @returns {string}
  */
-function anonymizeName(name){
-  // 處理 null / undefined / 'null' / 純空字串
-  const raw = String(name ?? '').trim();
-  if(!raw || raw==='null' || raw==='undefined') return '';
+function anonymizeName(name) {
+  // 轉成字串，處理 null/undefined/'null' 等邊界值
+  const raw = String(name == null ? '' : name).trim();
+  if (!raw || raw === 'null' || raw === 'undefined') return '';
 
-  // 只保留中文字元（去除尾部數字、空格、符號）
-  // 例：「陳勝文 2」→「陳勝文」；「王○明」保持不變
-  const s = raw.replace(/[\d\s\p{P}\p{S}]+$/u, '').trim();
-  if(!s) return raw; // 若清除後為空則回傳原始值
+  // ★ 關鍵修正：用簡單正規式剝離尾部數字與空白
+  //   例："龔家堂 2" → "龔家堂"，"尤潔晨 3" → "尤潔晨"
+  //   不使用 \p{P}\p{S}（Unicode property escapes），
+  //   避免跨瀏覽器相容問題。
+  const s = raw.replace(/\s*\d+\s*$/, '').trim();
 
-  if(s.length === 1) return s;
-  if(s.length === 2) return s[0] + '○';
-  // 3字以上：首字 + 中間全換○ + 末字
+  // 若清除後為空，回傳原始值（避免只有數字的特殊情況）
+  if (!s) return raw;
+
+  // 單字：不做匿名化，直接顯示
+  if (s.length === 1) return s;
+  // 兩字：末字換○
+  if (s.length === 2) return s[0] + '○';
+  // 三字以上：首字 + 中間全換○ + 末字
   return s[0] + '○'.repeat(s.length - 2) + s[s.length - 1];
 }
 
 /**
- * 格式化學生標籤（下拉選單 / 測驗頁 / 結果頁 統一使用此函式）
+ * 格式化學生標籤（下拉選單 / 測驗頁 / 結果頁 統一使用）
  * 雙層防禦：
- *   優先使用 s.name；若為空，嘗試從 s.number 提取中文姓名
+ *   Layer 1：優先使用 s.name 欄位
+ *   Layer 2：name 欄為空時，嘗試從 s.number 欄提取中文姓名
  * @param {Object} s - { number, name, weakNodes }
- * @returns {string}
+ * @returns {string} 已匿名化的標籤字串
  */
-function formatStudentLabel(s){
-  if(!s) return '—';
+function formatStudentLabel(s) {
+  if (!s) return '—';
 
-  let numStr  = String(s.number ?? '').trim();
-  let nameRaw = String(s.name   ?? '').trim();
+  let numStr  = String(s.number == null ? '' : s.number).trim();
+  let nameRaw = String(s.name   == null ? '' : s.name).trim();
 
-  // ── Layer 2：若 name 欄空白，嘗試從 number 欄提取中文姓名 ──
-  // 匹配模式：「4年 1班 3號 陳勝文 2」→ 提取「陳勝文」
-  // Regex: 「號」後面緊跟 2~4 個中文字
-  if(!nameRaw || nameRaw==='null' || nameRaw==='undefined'){
-    const match = numStr.match(/號\s*([\u4e00-\u9fa5]{2,4})/);
-    if(match){
-      nameRaw = match[1]; // 提取出的中文姓名
-      // 從 numStr 中移除姓名及其後綴（如「陳勝文 2」）
-      numStr  = numStr.replace(/\s+[\u4e00-\u9fa5]{2,4}.*$/, '').trim();
+  // ── Layer 2：name 欄空白時，從 number 欄提取中文姓名 ──
+  // 匹配：「4年 1班 3號 陳勝文 2」→ 提取「陳勝文」
+  // Regex: 「號」後面緊跟 2~4 個中文字，後接可選空格+數字
+  if (!nameRaw || nameRaw === 'null' || nameRaw === 'undefined') {
+    const m = numStr.match(/號\s*([\u4e00-\u9fa5]{2,4})(?:\s+\d+)?$/);
+    if (m) {
+      nameRaw = m[1];
+      // 從 numStr 移除姓名及其後方數字後綴
+      numStr = numStr.replace(/\s+[\u4e00-\u9fa5]{2,4}(?:\s+\d+)?$/, '').trim();
     }
   }
 
@@ -758,8 +755,13 @@ function previewExcel(){
       if(hasJsonCol){
         formatDetected='GAS任務分頁格式';
         dataRows.forEach(r=>{if(!r[0]||!String(r[0]).trim())return;
-          const num=String(r[0]).trim(),name=String(r[1]).trim();let wn=[];
-          try{wn=JSON.parse(r[3]||'[]');}catch(e){}
+          let num=String(r[0]).trim(), name=String(r[1]||'').trim();
+          // ★ Excel 解析時也做同樣的拆分修正
+          if(!name){
+            const m=num.match(/號\s*([\u4e00-\u9fa5]{2,4})/);
+            if(m){ name=m[1]; num=num.replace(/\s+[\u4e00-\u9fa5]{2,4}.*$/,'').trim(); }
+          }
+          let wn=[];try{wn=JSON.parse(r[3]||'[]');}catch(e){}
           wn=wn.filter(isValidNode);students.push({number:num,name,weakNodes:wn});wn.forEach(n=>allNodes.add(n));});
       }else{
         let hasValid=false;
@@ -767,7 +769,8 @@ function previewExcel(){
         if(hasValid){
           formatDetected='標準格式（A=座號 B=姓名 C+=節點名稱）';
           dataRows.forEach(r=>{if(!r[0]||!String(r[0]).trim())return;
-            const num=String(r[0]).trim(),name=String(r[1]).trim(),wn=[];
+            let num=String(r[0]).trim(), name=String(r[1]||'').trim();
+            const wn=[];
             for(let j=2;j<r.length;j++){const v=String(r[j]||'').trim();if(isValidNode(v))wn.push(v);}
             students.push({number:num,name,weakNodes:wn});wn.forEach(n=>allNodes.add(n));});
         }else{formatDetected='因材網原始格式（無法直接使用）';}
@@ -853,7 +856,7 @@ async function uploadAndGenerate(){
     app.taskList=await API.getTasks();populateAdminTaskDropdowns();
   }catch(e){
     stopProgress();const elapsed=elapsedStr();pMsg.innerHTML=`<span class="text-danger">❌ 失敗（${elapsed}）：${esc(e.message)}</span>`;pEl.textContent='';
-    Swal.fire({icon:'error',title:'出題中斷',html:`<b>錯誤：</b>${esc(e.message)}<br><br><div class="alert alert-warning small text-start mb-0"><b>🔧 排查：</b><br>1. GAS 編輯器 → 選 <code>testGeminiAPI</code> → ▶ 執行<br>2. 確認 API 金鑰有效<br>3. 回「題庫管理」點「重新出題」繼續</div>`,confirmButtonText:'我知道了'});
+    Swal.fire({icon:'error',title:'出題中斷',html:`<b>錯誤：</b>${esc(e.message)}<br><br><div class="alert alert-warning small text-start mb-0"><b>🔧 排查：</b><br>1. GAS 編輯器 → 選 <code>testGeminiAPI</code> → ▶ 執行<br>2. 確認 API 金鑰有效</div>`,confirmButtonText:'我知道了'});
   }
 }
 async function clearNodeBank(){
@@ -919,7 +922,7 @@ async function regenTask(taskName){
   const r=await Swal.fire({title:'重新出題',html:`確定為「${esc(taskName)}」重新出題？<br><span class="badge bg-info text-dark">${mode==='ai'?'純 AI 生成':mode==='pdf'?'PDF 教材':'混合模式'}</span>`,showCancelButton:true,confirmButtonText:'確定開始',cancelButtonText:'取消'});
   if(!r.isConfirmed)return;
   _waitStart=Date.now();
-  Swal.fire({title:'⏳ AI 出題中',html:`<div id="regen-status" class="fw-bold mb-2 text-success">${WAITING_MSGS[0]}</div><div class="progress mb-2" style="height:14px;border-radius:7px;"><div id="regen-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width:0%;transition:width .6s;"></div></div><div class="d-flex justify-content-between text-muted small"><span id="regen-detail">初始化中…</span><span id="regen-timer">已等待 0 秒</span></div><div class="mt-3 p-2 rounded small bg-light">💡 若中斷可關閉後到「題庫管理」點「重新出題」繼續。</div>`,allowOutsideClick:false,showConfirmButton:false});
+  Swal.fire({title:'⏳ AI 出題中',html:`<div id="regen-status" class="fw-bold mb-2 text-success">${WAITING_MSGS[0]}</div><div class="progress mb-2" style="height:14px;border-radius:7px;"><div id="regen-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width:0%;transition:width .6s;"></div></div><div class="d-flex justify-content-between text-muted small"><span id="regen-detail">初始化中…</span><span id="regen-timer">已等待 0 秒</span></div>`,allowOutsideClick:false,showConfirmButton:false});
   const stEl=()=>document.getElementById('regen-status'),tmEl=()=>document.getElementById('regen-timer');
   startProgress(stEl(),tmEl());
   const timerTick=setInterval(()=>{const el=tmEl();if(el)el.textContent=`已等待 ${Math.round((Date.now()-_waitStart)/1000)} 秒`;},1000);
@@ -938,7 +941,7 @@ async function regenTask(taskName){
     app.taskList=await API.getTasks();
   }catch(e){
     stopProgress();clearInterval(timerTick);
-    Swal.fire({icon:'error',title:'出題中斷',html:`<b>錯誤：</b>${esc(e.message)}<br><br><div class="alert alert-warning small text-start mb-0"><b>🔧 排查：</b><br>1. GAS → 選 <code>testGeminiAPI</code> → ▶ 執行<br>2. 確認 API 金鑰有效</div>`,confirmButtonText:'我知道了'});
+    Swal.fire({icon:'error',title:'出題中斷',html:`<b>錯誤：</b>${esc(e.message)}<br><br><div class="alert alert-warning small text-start mb-0"><b>🔧 排查：</b><br>1. GAS → 選 <code>testGeminiAPI</code> → ▶ 執行</div>`,confirmButtonText:'我知道了'});
   }
 }
 
@@ -956,7 +959,7 @@ async function loadResults(){
     <div class="table-responsive"><table class="table table-hover table-sm align-middle"><thead class="table-primary"><tr><th>測驗時間</th><th>座號</th><th>姓名</th><th>分數</th><th>歷時</th><th>明細</th></tr></thead><tbody>`;
     results.sort((a,b)=>new Date(b.time)-new Date(a.time)).forEach((r,ri)=>{
       const color=r.score>=80?'success':r.score>=60?'warning':'danger';
-      // ① 教師後台的成績表也套用匿名化
+      // 教師後台也套用匿名化
       const anonName=anonymizeName(r.name);
       html+=`<tr><td class="small">${esc(r.time)}</td><td>${esc(r.number)}</td><td>${esc(anonName)||'—'}</td><td><span class="badge bg-${color}">${r.score}分</span></td><td class="small">${Math.floor(r.elapsed/60)}分${r.elapsed%60}秒</td><td><button class="btn btn-outline-secondary btn-sm py-0 px-2" onclick="toggleResultDetail(${ri})"><i class="fa-solid fa-eye"></i></button></td></tr>
       <tr id="detail-row-${ri}" class="result-detail-row" style="display:none;"><td colspan="6" class="p-0"><div class="p-2">${(r.details||[]).map((d,di)=>`<div class="d-flex align-items-start gap-2 p-2 rounded mb-1 ${d.correct?'bg-light':'bg-danger bg-opacity-10'}"><span>${d.correct?'✅':'❌'}</span><div class="small flex-grow-1"><div class="fw-bold">第${di+1}題【${esc(d.node||'—')}】Level ${d.level||'?'}</div><div class="text-muted" style="white-space:pre-wrap;word-break:break-word;">${esc(d.text||'—')}</div><div>作答：<b>${esc(d.selected||'—')}</b>　正解：<b class="text-success">${esc(d.answer||'—')}</b></div></div></div>`).join('')}</div></td></tr>`;
@@ -1023,7 +1026,7 @@ async function genWorksheet(){
     const htmlContent=await API.generateTeachingWorksheet(topNodes,grade,subject);
     clearInterval(rot);clearInterval(tick);progBar.style.width='100%';progMsg.textContent='✅ 學習單生成完成！';
     app.wsHtml=htmlContent;
-    // ② FIXED: srcdoc 注入（最可靠，無 Blob/跨域/CSP 問題）
+    // ② FIXED: srcdoc 注入（最可靠）
     const frame=document.getElementById('ws-preview-frame');
     _writeToIframe(frame,htmlContent);
     document.getElementById('ws-preview-area').style.display='';
@@ -1052,14 +1055,12 @@ function _writeToIframe(frame, html){
 /**
  * ③ FIXED: 列印學習單
  * ─────────────────────────────────────────────
- * 使用預先掛在 DOM 的隱藏 iframe，
- * 完全不需要 window.open（不受彈出視窗封鎖）。
+ * 使用預先掛在 DOM 的隱藏 iframe，完全不需 window.open。
+ * 透過注入 body class 區分教師版/學生版：
+ *   body.print-teacher → 顯示所有內容
+ *   body.print-student → CSS 隱藏解答區塊
  *
- * 教師版：body.print-teacher → 顯示所有內容
- * 學生版：body.print-student → CSS 隱藏解答區塊
- *
- * @media print CSS 已寫死在注入的 <style> 中，
- * 確保不同瀏覽器列印預覽均正確。
+ * @param {'teacher'|'student'} mode
  */
 function printWorksheet(mode){
   if(!app.wsHtml){ Swal.fire({icon:'warning',title:'請先生成講義'}); return; }
@@ -1067,16 +1068,22 @@ function printWorksheet(mode){
   let html = app.wsHtml;
   const bodyClass = (mode==='student') ? 'print-student' : 'print-teacher';
 
-  // 注入 body class（支援 AI 生成的 HTML 各種格式）
+  // 注入 body class（支援各種 AI 生成 HTML 格式）
   if(html.includes('<body')){
-    html = html.replace(/<body([^>]*)>/i, (m,attrs)=>`<body${attrs} class="${bodyClass} ${(attrs.match(/class="([^"]*)"/)||[])[1]||''}">`);
+    html = html.replace(/<body([^>]*)>/i, (m,attrs) => {
+      // 若已有 class 屬性，附加；否則新增
+      if(/class=/i.test(attrs)){
+        return m.replace(/class="([^"]*)"/i, `class="$1 ${bodyClass}"`);
+      }
+      return `<body${attrs} class="${bodyClass}">`;
+    });
   } else {
     html = `<body class="${bodyClass}">` + html + '</body>';
   }
 
-  // ③ 注入列印用 CSS（含教師版/學生版分離規則）
+  // ③ 注入列印用 CSS（含教師版/學生版解答隱藏規則）
   const printCSS = `<style>
-    /* ──── 學生版：隱藏所有解答相關區塊 ──── */
+    /* ── 學生版：隱藏解答相關區塊（螢幕 + 列印均有效） ── */
     body.print-student .answer-section,
     body.print-student .answer-key,
     body.print-student .answers,
@@ -1090,7 +1097,6 @@ function printWorksheet(mode){
       visibility: hidden !important;
     }
     @media print {
-      /* 學生版列印時隱藏解答 */
       body.print-student .answer-section,
       body.print-student [class*="answer"],
       body.print-student [id*="answer"],
@@ -1100,17 +1106,15 @@ function printWorksheet(mode){
       }
       /* 防止題目被截斷到下一頁 */
       .question, .ws-question, .exercise-item,
-      table, .card { page-break-inside: avoid; break-inside: avoid; }
-      /* 大標題後不換頁 */
-      h1,h2,h3,h4,h5 { page-break-after: avoid; break-after: avoid; }
-      /* 強制白底 */
-      * { -webkit-print-color-adjust: exact; color-adjust: exact; }
+      table, .card { page-break-inside:avoid; break-inside:avoid; }
+      h1,h2,h3,h4,h5 { page-break-after:avoid; break-after:avoid; }
+      * { -webkit-print-color-adjust:exact; color-adjust:exact; }
     }
   </style>`;
 
   html = html.includes('</head>') ? html.replace('</head>', printCSS+'</head>') : printCSS + html;
 
-  // 自動列印腳本
+  // 自動觸發列印
   const printScript = `<script>
     (function(){
       function go(){ try{ window.focus(); window.print(); }catch(e){} }
@@ -1120,7 +1124,7 @@ function printWorksheet(mode){
   <\/script>`;
   html = html.includes('</body>') ? html.replace('</body>', printScript+'</body>') : html+printScript;
 
-  // 取預先掛好的隱藏 iframe，直接寫入並觸發列印
+  // 取預先掛好的隱藏 iframe
   let frame = document.getElementById('hidden-print-frame');
   if(!frame){
     frame = document.createElement('iframe');
@@ -1241,41 +1245,52 @@ async function finishQuiz(){
 
 /* ════════════════════════════════════════════════
    ① FIXED: 計算紙（完整修正版）
-   ────────────────────────────────────────────
-   核心原則：完全不依賴 event 參數，
-   改用 CSS class .is-open 控制顯示/隱藏。
-   iOS 需要的 focus + scrollIntoView 也在此處理。
+   ─────────────────────────────────────────────
+   Root Cause：
+   原版 closeScratch(e){ if(!e||!e.target)return; }
+   「收起」按鈕不傳參數 → !e 為 true → return → 關不掉
+
+   修正：
+   1. 改用 CSS .is-open class 控制顯示/隱藏
+   2. closeScratch() 完全不依賴 event 參數
+   3. 背景關閉由 addEventListener 處理（已在 DOMContentLoaded 設定）
+   4. iOS Safari：延遲 focus + scrollIntoView 避免鍵盤遮擋
 ════════════════════════════════════════════════ */
 
-/** 切換計算紙開/關 */
+/**
+ * 切換計算紙開/關
+ */
 function toggleScratch(){
-  const modal=document.getElementById('scratch-modal');
-  if(modal.classList.contains('is-open')) closeScratch();
-  else {
+  const modal = document.getElementById('scratch-modal');
+  if(modal.classList.contains('is-open')){
+    closeScratch();
+  } else {
     modal.classList.add('is-open');
     // iOS Safari：延遲 focus 讓動畫先跑完，避免鍵盤遮住 textarea
     setTimeout(()=>{
-      const pad=document.getElementById('scratch-pad');
-      if(pad){ pad.focus(); pad.scrollIntoView({behavior:'smooth',block:'nearest'}); }
-    },180);
+      const pad = document.getElementById('scratch-pad');
+      if(pad){
+        pad.focus();
+        pad.scrollIntoView({behavior:'smooth', block:'nearest'});
+      }
+    }, 180);
   }
 }
 
 /**
  * 關閉計算紙
- * ① FIXED BUG ROOT CAUSE:
- *   原版：function closeScratch(e){ if(!e||!e.target)return; ...}
- *   「收起」按鈕呼叫 closeScratch() 不傳參數 → !e 為 true → 直接 return → 關不掉
- *
- *   修正：完全移除 event 依賴，改用 classList.remove()
+ * ★ 關鍵修正：完全不使用 event 參數，改用 classList.remove()
  */
 function closeScratch(){
   document.getElementById('scratch-modal').classList.remove('is-open');
 }
 
-/** 清空計算紙內容 */
+/**
+ * 清空計算紙內容
+ */
 function clearScratch(){
-  const pad=document.getElementById('scratch-pad');if(pad)pad.value='';
+  const pad = document.getElementById('scratch-pad');
+  if(pad) pad.value = '';
 }
 
 /* ════════════════════════════════════════════════
@@ -1318,8 +1333,8 @@ async function wizardCreateAndGenerate(){
     while(true){const result=await API.generateBatch(wizSelectedNodes,grade,subject,batchIndex);totalBatches=result.total||totalBatches||1;const pct=Math.min(95,Math.round(10+(result.current/Math.max(totalBatches,1))*85));pBar.style.width=pct+'%';pMsg.textContent=`✅ ${result.current}/${totalBatches} 批完成（${pct}%）`;if(result.done)break;batchIndex++;_rotMsgIdx=(_rotMsgIdx+1)%WAITING_MSGS.length;pMsg.textContent=WAITING_MSGS[_rotMsgIdx];await sleep(delay);}
     stopProgress();const elapsed=elapsedStr();pBar.style.width='100%';pMsg.innerHTML=`🎉 完成！耗時 <b>${elapsed}</b>`;pEl.textContent='';
     app.taskList=await API.getTasks();populateAdminTaskDropdowns();loadTasksForLogin();
-    Swal.fire({icon:'success',title:'🎉 任務建立完成！',html:`<b>${esc(taskName)}</b> 已完成 AI 出題。<br><span class="badge bg-secondary">耗時：${elapsed}</span><br><span class="small text-muted mt-1 d-block">學生可在登入頁選擇此任務開始測驗。</span>`,confirmButtonText:'好的'});
-  }catch(e){stopProgress();const elapsed=elapsedStr();pMsg.innerHTML=`<span class="text-danger">❌ 失敗（${elapsed}）：${esc(e.message)}</span>`;pEl.textContent='';Swal.fire({icon:'error',title:'建立失敗',html:`<b>錯誤：</b>${esc(e.message)}<br><br><div class="alert alert-warning small text-start mb-0"><b>🔧 排查：</b><br>1. GAS → 選 <code>testGeminiAPI</code> → ▶ 執行<br>2. 確認 API 金鑰有效</div>`,confirmButtonText:'我知道了'});}
+    Swal.fire({icon:'success',title:'🎉 任務建立完成！',html:`<b>${esc(taskName)}</b> 已完成 AI 出題。<br><span class="badge bg-secondary">耗時：${elapsed}</span>`,confirmButtonText:'好的'});
+  }catch(e){stopProgress();const elapsed=elapsedStr();pMsg.innerHTML=`<span class="text-danger">❌ 失敗（${elapsed}）：${esc(e.message)}</span>`;pEl.textContent='';Swal.fire({icon:'error',title:'建立失敗',html:`<b>錯誤：</b>${esc(e.message)}`,confirmButtonText:'我知道了'});}
 }
 
 /* ════════════════════════════════════════════════
@@ -1340,10 +1355,10 @@ function renderMathIn(el){
 }
 
 /* ════════════════════════════════════════════════
-   工具
+   工具函式
 ════════════════════════════════════════════════ */
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-function esc(str){return String(str??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(str){return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 </script>
 </body>
 </html>
