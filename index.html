@@ -75,15 +75,14 @@
     /* ─── Scratch pad ─── */
     #scratch-btn{position:fixed;bottom:80px;right:18px;z-index:1000;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;font-size:1.2rem;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;display:none;align-items:center;justify-content:center;}
     #scratch-modal{display:none;position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);align-items:flex-end;justify-content:center;cursor:pointer;}
-    #scratch-inner{cursor:default;}
-    #scratch-pad{cursor:text;user-select:text;-webkit-user-select:text;}
-    #scratch-inner{background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:16px;max-height:70vh;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,.15);}
+    #scratch-inner{cursor:default;background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:16px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,.15);}
     #scratch-inner h6{margin:0 0 8px;color:var(--primary-dark);}
-    #scratch-pad{flex:1;resize:none;border:1px solid #e0e0e0;border-radius:10px;padding:10px;font-size:.95rem;min-height:200px;}
+    #scratch-pad{flex:1;resize:none;border:2px solid #e0e0e0;border-radius:10px;padding:12px;font-size:1rem;min-height:220px;cursor:text;user-select:text;-webkit-user-select:text;pointer-events:all;-webkit-tap-highlight-color:transparent;}
+    #scratch-pad:focus{border-color:var(--primary);outline:none;}
 
     /* ─── Worksheet preview ─── */
     #ws-preview-area{border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;margin-top:12px;}
-    #ws-preview-frame{width:100%;height:70vh;border:none;}
+    #ws-preview-frame{width:100%;height:75vh;min-height:500px;border:none;display:block;}
 
     /* ─── Tabs mobile compact ─── */
     @media(max-width:575px){
@@ -609,11 +608,11 @@ function anonymizeName(name){
   return name[0]+mid+name[name.length-1];
 }
 
-// 在下拉選單或顯示時去識別化
+// 在下拉選單或顯示時去識別化（不加括號，空格分隔）
 function formatStudentLabel(s){
   const name = s.name && String(s.name).trim() && String(s.name)!=='null' ? s.name : '';
   const anon = name ? anonymizeName(name) : '';
-  return anon ? `${s.number}（${anon}）` : s.number;
+  return anon ? `${s.number} ${anon}` : s.number;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1195,18 +1194,22 @@ async function genWorksheet(){
     progBar.style.width='100%';progMsg.textContent='✅ 學習單生成完成！';
     app.wsHtml=htmlContent;
 
-    // 顯示 in-page 預覽（使用 contentDocument.write 避免 srcdoc 空白問題）
+    // 顯示 in-page 預覽 — 使用 Blob URL（跨瀏覽器最可靠）
     const frame=document.getElementById('ws-preview-frame');
     const previewArea=document.getElementById('ws-preview-area');
+    // 確保舊的 Blob URL 被釋放
+    if(frame._blobUrl){ URL.revokeObjectURL(frame._blobUrl); frame._blobUrl=null; }
     try{
-      const fdoc=frame.contentDocument||frame.contentWindow.document;
-      fdoc.open();fdoc.write(htmlContent);fdoc.close();
-    }catch(e2){
-      // 備用：blob URL
+      const blob=new Blob([htmlContent],{type:'text/html;charset=utf-8'});
+      const blobUrl=URL.createObjectURL(blob);
+      frame._blobUrl=blobUrl;
+      frame.src=blobUrl;
+    }catch(blobErr){
+      console.warn('Blob URL failed, try contentDocument:', blobErr);
       try{
-        const blob=new Blob([htmlContent],{type:'text/html;charset=utf-8'});
-        frame.src=URL.createObjectURL(blob);
-      }catch(e3){ console.warn('iframe fallback failed',e3); }
+        const fdoc=frame.contentDocument||frame.contentWindow?.document;
+        if(fdoc){ fdoc.open();fdoc.write(htmlContent);fdoc.close(); }
+      }catch(e2){ console.warn('iframe inject failed', e2); }
     }
     previewArea.style.display='';
     document.getElementById('ws-buttons').style.display='flex';
@@ -1224,15 +1227,27 @@ function printWorksheet(mode){
   if(!app.wsHtml){Swal.fire({icon:'warning',title:'請先生成講義'});return;}
   let html=app.wsHtml;
   if(mode==='student'){
-    // 學生版：移除所有含「解答」「正確答案」的 div 或替換
-    html=html.replace(/<div[^>]*class="[^"]*answer[^"]*"[^>]*>[\s\S]*?<\/div>/gi,'')
-             .replace(/<section[^>]*id="[^"]*answer[^"]*"[^>]*>[\s\S]*?<\/section>/gi,'');
+    // 學生版：以 CSS 隱藏含解答的區塊，並注入列印樣式
+    const hideStyle='<style>.answer-section,.answer-key,[class*="answer"],[id*="answer"]{display:none!important;}</style>';
+    html=html.replace('</head>', hideStyle+'</head>').replace('<head>','<head>'+hideStyle);
   }
-  const w=window.open('','_blank');
-  if(!w){Swal.fire({icon:'warning',title:'彈出視窗被封鎖',text:'請允許此網站彈出視窗，或在瀏覽器設定中解除封鎖。'});return;}
-  w.document.write(html);
-  w.document.close();
-  setTimeout(()=>w.print(),800);
+  // 使用 Blob URL 開新視窗列印（不受彈出視窗封鎖影響）
+  try{
+    const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+    const blobUrl=URL.createObjectURL(blob);
+    const w=window.open(blobUrl,'_blank');
+    if(w){ setTimeout(()=>{ try{w.print();}catch(e){} },1200); }
+    else{
+      // 若 Blob 視窗也被封鎖，直接在 iframe 內觸發列印
+      const frame=document.getElementById('ws-preview-frame');
+      if(frame&&frame.contentWindow){ frame.contentWindow.print(); }
+      else{ Swal.fire({icon:'warning',title:'請手動列印',html:'請按 Ctrl+P（或 ⌘P）列印目前預覽的講義。'}); }
+    }
+  }catch(e){
+    console.warn('print failed:', e);
+    const frame=document.getElementById('ws-preview-frame');
+    if(frame&&frame.contentWindow) frame.contentWindow.print();
+  }
 }
 
 /* ═══════════════════════════════════════════════════════
