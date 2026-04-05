@@ -72,17 +72,59 @@
     .err-bar{height:8px;border-radius:4px;background:#e0e0e0;overflow:hidden;margin:4px 0;}
     .err-fill{height:100%;border-radius:4px;transition:width .6s;}
 
-    /* ─── Scratch pad ─── */
-    #scratch-btn{position:fixed;bottom:80px;right:18px;z-index:1000;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;font-size:1.2rem;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;display:none;align-items:center;justify-content:center;}
-    #scratch-modal{display:none;position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);align-items:flex-end;justify-content:center;cursor:pointer;}
-    #scratch-inner{cursor:default;background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:16px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,.15);}
+    /* ─── ① FIXED: 計算紙 scratch pad ─── */
+    #scratch-btn{
+      position:fixed;bottom:80px;right:18px;z-index:1000;
+      width:48px;height:48px;border-radius:50%;
+      background:var(--primary);color:#fff;border:none;font-size:1.2rem;
+      box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;
+      display:none;align-items:center;justify-content:center;
+    }
+    /* FIXED: 使用 visibility 控制，避免 flex/none 切換造成回流 */
+    #scratch-modal{
+      position:fixed;inset:0;z-index:1050;
+      background:rgba(0,0,0,.45);
+      display:flex;align-items:flex-end;justify-content:center;
+      visibility:hidden;opacity:0;
+      transition:opacity .2s,visibility .2s;
+      /* 讓背景可點擊關閉 */
+      cursor:pointer;
+    }
+    #scratch-modal.is-open{visibility:visible;opacity:1;}
+    #scratch-inner{
+      cursor:default;background:#fff;width:100%;max-width:640px;
+      border-radius:20px 20px 0 0;padding:16px;
+      max-height:75vh;display:flex;flex-direction:column;
+      box-shadow:0 -4px 20px rgba(0,0,0,.15);
+      /* FIXED: 行動裝置底部安全區 */
+      padding-bottom:max(16px, env(safe-area-inset-bottom));
+      transform:translateY(20px);transition:transform .25s;
+    }
+    #scratch-modal.is-open #scratch-inner{transform:translateY(0);}
     #scratch-inner h6{margin:0 0 8px;color:var(--primary-dark);}
-    #scratch-pad{flex:1;resize:none;border:2px solid #e0e0e0;border-radius:10px;padding:12px;font-size:1rem;min-height:220px;cursor:text;user-select:text;-webkit-user-select:text;pointer-events:all;-webkit-tap-highlight-color:transparent;}
+    #scratch-pad{
+      flex:1;resize:none;border:2px solid #e0e0e0;border-radius:10px;
+      padding:12px;font-size:1rem;min-height:220px;
+      /* FIXED: iOS 需要明確設定，才能在 modal 內正常輸入 */
+      -webkit-user-select:text!important;
+      user-select:text!important;
+      pointer-events:all;
+      touch-action:auto;
+      -webkit-overflow-scrolling:touch;
+      cursor:text;
+    }
     #scratch-pad:focus{border-color:var(--primary);outline:none;}
 
-    /* ─── Worksheet preview ─── */
+    /* ─── ② FIXED: 學習單預覽 iframe ─── */
     #ws-preview-area{border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;margin-top:12px;}
-    #ws-preview-frame{width:100%;height:75vh;min-height:500px;border:none;display:block;}
+    #ws-preview-frame{
+      width:100%;height:75vh;min-height:500px;border:none;display:block;
+      /* FIXED: 避免 iOS 壓縮 iframe */
+      -webkit-overflow-scrolling:touch;
+    }
+    @media(max-width:575px){
+      #ws-preview-frame{height:60vh;min-height:360px;}
+    }
 
     /* ─── Tabs mobile compact ─── */
     @media(max-width:575px){
@@ -103,6 +145,13 @@
     footer{background:#fff;border-top:1px solid #e0e0e0;padding:10px 0;font-size:.78rem;color:#9e9e9e;text-align:center;}
     footer a{color:#9e9e9e;text-decoration:none;}
     footer a:hover{color:var(--primary);}
+
+    /* ─── ③ FIXED: 隱藏列印用 iframe ─── */
+    #hidden-print-frame{
+      position:fixed;left:-9999px;top:-9999px;
+      width:210mm;height:297mm;border:none;
+      pointer-events:none;
+    }
   </style>
 </head>
 <body>
@@ -118,18 +167,30 @@
   </div>
 </header>
 
-<!-- ██ 計算紙按鈕 / 模態 ██ -->
+<!-- ██ ③ FIXED: 隱藏列印用 iframe（預先掛在 DOM，無需 window.open）██ -->
+<iframe id="hidden-print-frame" title="列印用框架" aria-hidden="true"></iframe>
+
+<!-- ██ ① FIXED: 計算紙按鈕 / 模態 ██ -->
 <button id="scratch-btn" title="計算紙" onclick="toggleScratch()"><i class="fa-solid fa-pen-to-square"></i></button>
-<div id="scratch-modal" onclick="closeScratch(event)">
-  <div id="scratch-inner" onclick="event.stopPropagation()">
+
+<!-- FIXED: 移除 onclick 在 modal 上，改由 JS 管理，避免手機上誤觸 -->
+<div id="scratch-modal" role="dialog" aria-modal="true" aria-label="計算紙">
+  <div id="scratch-inner">
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h6><i class="fa-solid fa-pen-to-square me-1 text-primary"></i>計算紙</h6>
       <div class="d-flex gap-2">
         <button class="btn btn-outline-danger btn-sm" onclick="clearScratch()">清空</button>
+        <!-- FIXED: 直接呼叫 closeScratch() 不傳 event -->
         <button class="btn btn-outline-secondary btn-sm" onclick="closeScratch()">收起</button>
       </div>
     </div>
-    <textarea id="scratch-pad" placeholder="在這裡進行計算草稿…"></textarea>
+    <!-- FIXED: 加 autocomplete/autocorrect/autocapitalize 屬性，改善行動裝置體驗 -->
+    <textarea id="scratch-pad"
+      placeholder="在這裡進行計算草稿…"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"></textarea>
   </div>
 </div>
 
@@ -363,7 +424,7 @@
                     <div class="progress quiz-progress mb-1"><div id="ws-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width:0%"></div></div>
                     <span id="ws-progress-msg" class="text-muted small">生成中…</span>
                   </div>
-                  <!-- 預覽及下載按鈕 -->
+                  <!-- 列印按鈕 -->
                   <div id="ws-buttons" style="display:none;" class="d-flex gap-2 flex-wrap mt-2">
                     <button class="btn btn-success btn-sm" onclick="printWorksheet('teacher')">
                       <i class="fa-solid fa-print me-1"></i>教師版（含解答）
@@ -372,8 +433,9 @@
                       <i class="fa-solid fa-print me-1"></i>學生版（無解答）
                     </button>
                   </div>
+                  <!-- ② FIXED: iframe 預覽區 -->
                   <div id="ws-preview-area" style="display:none;" class="mt-2">
-                    <iframe id="ws-preview-frame" title="差異化學習單預覽"></iframe>
+                    <iframe id="ws-preview-frame" title="差異化學習單預覽" sandbox="allow-scripts allow-same-origin"></iframe>
                   </div>
                 </div>
               </div>
@@ -493,7 +555,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Apps Script × GitHub 協作 ｜ v8.9 ｜
+    車城國小資訊老師 @ Google Apps Script × GitHub 協作 ｜ v8.9 fix ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -520,7 +582,7 @@ const app = {
   timerInterval:  null,
   excelStudents:  [],
   excelNodes:     [],
-  wsHtml:         '',   // 學習單 HTML 暫存
+  wsHtml:         '', // 學習單 HTML 暫存
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -560,8 +622,8 @@ const API = {
   generateTeachingWorksheet:(n,g,s)  => API._call('generateTeachingWorksheet',{topNodes:n,grade:g,subject:s}),
   getGeminiSettings:       ()        => API._call('getGeminiSettings'),
   updateGeminiSettings:    (m,p,pwd) => API._call('updateGeminiSettings',{model:m,isPaid:p,pwd}),
-  getQuestionErrorRates:      (n) => API._call('getQuestionErrorRates',{taskName:n}),
-  getPracticeQuestionsForErrors:(n) => API._call('getPracticeQuestionsForErrors',{taskName:n}),
+  getQuestionErrorRates:      (n)    => API._call('getQuestionErrorRates',{taskName:n}),
+  getPracticeQuestionsForErrors:(n)  => API._call('getPracticeQuestionsForErrors',{taskName:n}),
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -571,15 +633,35 @@ function showView(name){
   ['login','admin','quiz','result'].forEach(v=>{
     document.getElementById('view-'+v).style.display=(v===name)?'':'none';
   });
-  document.getElementById('scratch-btn').style.display = (name==='quiz') ? 'flex' : 'none';
+  const scratchBtn = document.getElementById('scratch-btn');
+  scratchBtn.style.display = (name==='quiz') ? 'flex' : 'none';
+  // 切換視圖時關閉計算紙
+  if(name !== 'quiz') closeScratch();
 }
 
 window.addEventListener('DOMContentLoaded',()=>{
   showView('login');
   loadTasksForLogin();
-  document.getElementById('wiz-custom-node')?.addEventListener('keydown',e=>{if(e.key==='Enter')addWizCustomNode();});
+
+  document.getElementById('wiz-custom-node')?.addEventListener('keydown',e=>{
+    if(e.key==='Enter') addWizCustomNode();
+  });
   updateWizNodePresets();
   addWizStudentRows(5);
+
+  // ① FIXED: 計算紙 — 用 JS 綁定背景點擊關閉，避免行動裝置觸控問題
+  const modal = document.getElementById('scratch-modal');
+  const inner = document.getElementById('scratch-inner');
+  modal.addEventListener('click', function(e){
+    // 只有點到遮罩（非 inner 內部）才關閉
+    if (!inner.contains(e.target)) closeScratch();
+  });
+  modal.addEventListener('touchend', function(e){
+    if (!inner.contains(e.target)) closeScratch();
+  }, {passive:true});
+  // 阻止 inner 內部的事件冒泡到 modal
+  inner.addEventListener('click', e => e.stopPropagation());
+  inner.addEventListener('touchend', e => e.stopPropagation(), {passive:true});
 });
 
 async function loadTasksForLogin(){
@@ -587,7 +669,11 @@ async function loadTasksForLogin(){
   sel.innerHTML='<option value="">-- 連線中… --</option>';
   try{
     app.taskList=await API.getTasks();
-    if(!app.taskList.length){sel.innerHTML='<option value="">-- 目前沒有測驗任務 --</option>';msg.textContent='請聯絡老師建立測驗任務後再登入。';return;}
+    if(!app.taskList.length){
+      sel.innerHTML='<option value="">-- 目前沒有測驗任務 --</option>';
+      msg.textContent='請聯絡老師建立測驗任務後再登入。';
+      return;
+    }
     sel.innerHTML='<option value="">-- 請選擇測驗任務 --</option>'+
       app.taskList.map(t=>`<option value="${esc(t.taskName)}">${esc(t.taskName)}（${t.grade}/${t.subject}）</option>`).join('');
     msg.textContent='';
@@ -598,21 +684,37 @@ async function loadTasksForLogin(){
 }
 
 /* ═══════════════════════════════════════════════════════
-   ④ 姓名去識別化（中間字→○）
+   ④ ① FIXED: 姓名去識別化（完整邊界保護版）
 ═══════════════════════════════════════════════════════ */
+/**
+ * 將姓名中間字替換為○
+ * 1字：原樣
+ * 2字：第1字 + ○
+ * 3字以上：第1字 + ○(×中間數) + 最後1字
+ * @param {string} name
+ * @returns {string}
+ */
 function anonymizeName(name){
-  if(!name||name.length<=1) return name;
-  if(name.length===2) return name[0]+'○';
-  // 中間字全換○
-  const mid = '○'.repeat(name.length-2);
-  return name[0]+mid+name[name.length-1];
+  // 確保是字串，處理 null / undefined / 'null' / 純數字等異常值
+  const s = String(name ?? '').trim();
+  if(!s || s === 'null' || s === 'undefined') return '';
+  if(s.length === 1) return s;
+  if(s.length === 2) return s[0] + '○';
+  // 3字以上：首尾不動，中間全換○
+  return s[0] + '○'.repeat(s.length - 2) + s[s.length - 1];
 }
 
-// 在下拉選單或顯示時去識別化（不加括號，空格分隔）
+/**
+ * 格式化學生標籤：座號 + 去識別化姓名
+ * 用於下拉選單、測驗標頭、成績頁面
+ */
 function formatStudentLabel(s){
-  const name = s.name && String(s.name).trim() && String(s.name)!=='null' ? s.name : '';
-  const anon = name ? anonymizeName(name) : '';
-  return anon ? `${s.number} ${anon}` : s.number;
+  if(!s) return '—';
+  const numStr  = String(s.number ?? '').trim();
+  const nameRaw = String(s.name   ?? '').trim();
+  const anon    = anonymizeName(nameRaw);
+  // 同時有座號和名字：「01 王○明」；只有座號：「01」
+  return anon ? `${numStr} ${anon}` : numStr;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -625,7 +727,10 @@ async function onTaskChange(){
   if(!taskName){numSel.innerHTML='<option value="">-- 請先選任務 --</option>';return;}
   try{
     app.studentList=await API.getStudents(taskName);
-    if(!app.studentList.length){numSel.innerHTML='<option value="">-- 此任務無學生資料 --</option>';return;}
+    if(!app.studentList.length){
+      numSel.innerHTML='<option value="">-- 此任務無學生資料 --</option>';
+      return;
+    }
     numSel.innerHTML='<option value="">-- 請選擇姓名 --</option>'+
       app.studentList.map(s=>`<option value="${esc(s.number)}">${esc(formatStudentLabel(s))}</option>`).join('');
   }catch(e){numSel.innerHTML=`<option value="">-- 載入失敗：${e.message} --</option>`;}
@@ -879,7 +984,6 @@ async function loadBankStatus(){
           <p class="text-muted small mb-1">${task.grade} / ${task.subject} / ${task.studentCount} 位學生</p>
           <p class="text-muted small mb-1">建立：${task.createdAt}</p>
           <div class="small mb-2"><b>有效節點：</b><span class="badge bg-${color}">${valid.length} 個</span></div>
-          <!-- 出題模式選擇 -->
           <div class="mb-2">
             <label class="form-label small fw-bold text-muted mb-1">重新出題模式</label>
             <div class="d-flex gap-2 flex-wrap small">
@@ -907,9 +1011,6 @@ async function loadBankStatus(){
 async function previewBankQuestions(taskName){
   Swal.fire({title:'載入題目預覽…',allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
-    const task=app.taskList.find(t=>t.taskName===taskName);
-    const results=await API.getTaskResults(taskName).catch(()=>[]);
-    // 從題庫抽樣顯示
     const sample=await API.generateQuiz(null,taskName);
     Swal.close();
     if(!sample||!sample.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
@@ -938,7 +1039,6 @@ async function previewBankQuestions(taskName){
 }
 
 async function regenTask(taskName){
-  // 取模式
   const key = 'regen-mode-'+taskName.replace(/[^a-zA-Z0-9]/g,'_');
   const modeEl = document.querySelector(`input[name="${key}"]:checked`);
   const mode   = modeEl ? modeEl.value : 'ai';
@@ -970,7 +1070,6 @@ async function regenTask(taskName){
   try{
     let batchIndex=0,totalBatches=null;
     while(true){
-      // 傳入模式（PDF/Mixed 需要資料夾ID）
       let folderId='';
       if(mode!=='ai'){try{folderId=await API.getFolderId();}catch(e){}}
       const result=await API.regenerateBatchForTask(taskName,batchIndex,mode,folderId);
@@ -1023,7 +1122,8 @@ async function loadResults(){
       </tr></thead><tbody>`;
     results.sort((a,b)=>new Date(b.time)-new Date(a.time)).forEach((r,ri)=>{
       const color=r.score>=80?'success':r.score>=60?'warning':'danger';
-      const anonName=r.name?anonymizeName(r.name):'';
+      // ① FIXED: 一致使用 anonymizeName，確保正確去識別化
+      const anonName = anonymizeName(r.name);
       html+=`<tr>
         <td class="small">${esc(r.time)}</td>
         <td>${esc(r.number)}</td>
@@ -1050,7 +1150,6 @@ async function loadResults(){
       </tr>`;
     });
     html+='</tbody></table></div>';
-    // 類似題按鈕
     html+=`<div class="mt-3">
       <button class="btn btn-outline-warning btn-sm" onclick="genSimilarPractice('${taskName.replace(/'/g,"\\'")}')">
         <i class="fa-solid fa-dumbbell me-1"></i>生成錯誤率前3高的類似題（供課堂複習）
@@ -1117,7 +1216,7 @@ function toggleResultDetail(ri){
 }
 
 /* ═══════════════════════════════════════════════════════
-   ⑬ 差異化分析 + 學習單生成（修正：in-page 預覽 + PDF）
+   ⑬ 差異化分析 + ② FIXED: 學習單 iframe + ③ FIXED: 列印
 ═══════════════════════════════════════════════════════ */
 async function loadAnalysis(){
   const taskName=document.getElementById('analysis-task').value;
@@ -1159,6 +1258,9 @@ async function loadAnalysis(){
     document.getElementById('ws-buttons').style.display='none';
     document.getElementById('ws-preview-area').style.display='none';
     document.getElementById('ws-gen-progress').style.display='none';
+    // FIXED: 清除舊的 iframe 內容
+    const oldFrame = document.getElementById('ws-preview-frame');
+    if(oldFrame) oldFrame.srcdoc = '';
     app.wsHtml='';
   }catch(e){area.innerHTML=`<p class="text-danger">分析失敗：${e.message}</p>`;}
 }
@@ -1194,27 +1296,14 @@ async function genWorksheet(){
     progBar.style.width='100%';progMsg.textContent='✅ 學習單生成完成！';
     app.wsHtml=htmlContent;
 
-    // 顯示 in-page 預覽 — 使用 Blob URL（跨瀏覽器最可靠）
+    // ② FIXED: 使用 srcdoc 注入 iframe（最廣泛支援，無 Blob/跨域/CSP 問題）
     const frame=document.getElementById('ws-preview-frame');
     const previewArea=document.getElementById('ws-preview-area');
-    // 確保舊的 Blob URL 被釋放
-    if(frame._blobUrl){ URL.revokeObjectURL(frame._blobUrl); frame._blobUrl=null; }
-    try{
-      const blob=new Blob([htmlContent],{type:'text/html;charset=utf-8'});
-      const blobUrl=URL.createObjectURL(blob);
-      frame._blobUrl=blobUrl;
-      frame.src=blobUrl;
-    }catch(blobErr){
-      console.warn('Blob URL failed, try contentDocument:', blobErr);
-      try{
-        const fdoc=frame.contentDocument||frame.contentWindow?.document;
-        if(fdoc){ fdoc.open();fdoc.write(htmlContent);fdoc.close(); }
-      }catch(e2){ console.warn('iframe inject failed', e2); }
-    }
+    _writeToIframe(frame, htmlContent);
     previewArea.style.display='';
     document.getElementById('ws-buttons').style.display='flex';
 
-    setTimeout(()=>{progDiv.style.display='none';},2000);
+    setTimeout(()=>{ progDiv.style.display='none'; },2000);
   }catch(e){
     clearInterval(rot);clearInterval(tick);
     progDiv.style.display='none';
@@ -1223,31 +1312,93 @@ async function genWorksheet(){
   }
 }
 
-function printWorksheet(mode){
-  if(!app.wsHtml){Swal.fire({icon:'warning',title:'請先生成講義'});return;}
-  let html=app.wsHtml;
-  if(mode==='student'){
-    // 學生版：以 CSS 隱藏含解答的區塊，並注入列印樣式
-    const hideStyle='<style>.answer-section,.answer-key,[class*="answer"],[id*="answer"]{display:none!important;}</style>';
-    html=html.replace('</head>', hideStyle+'</head>').replace('<head>','<head>'+hideStyle);
+/**
+ * ② FIXED: 可靠的 iframe 寫入函式
+ * 優先使用 srcdoc（現代瀏覽器最安全），降級至 contentDocument.write()
+ */
+function _writeToIframe(frame, html){
+  if(!frame || !html) return;
+  // 方法1：srcdoc（Chrome/Firefox/Safari/Edge 全支援，無跨域限制）
+  if('srcdoc' in frame){
+    frame.srcdoc = html;
+    return;
   }
-  // 使用 Blob URL 開新視窗列印（不受彈出視窗封鎖影響）
+  // 方法2：contentDocument.write（IE/舊瀏覽器降級）
   try{
-    const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-    const blobUrl=URL.createObjectURL(blob);
-    const w=window.open(blobUrl,'_blank');
-    if(w){ setTimeout(()=>{ try{w.print();}catch(e){} },1200); }
-    else{
-      // 若 Blob 視窗也被封鎖，直接在 iframe 內觸發列印
-      const frame=document.getElementById('ws-preview-frame');
-      if(frame&&frame.contentWindow){ frame.contentWindow.print(); }
-      else{ Swal.fire({icon:'warning',title:'請手動列印',html:'請按 Ctrl+P（或 ⌘P）列印目前預覽的講義。'}); }
+    const doc = frame.contentDocument || frame.contentWindow?.document;
+    if(doc){
+      doc.open('text/html', 'replace');
+      doc.write(html);
+      doc.close();
     }
-  }catch(e){
-    console.warn('print failed:', e);
-    const frame=document.getElementById('ws-preview-frame');
-    if(frame&&frame.contentWindow) frame.contentWindow.print();
+  }catch(err){
+    console.warn('[iframe write fallback failed]', err);
   }
+}
+
+/**
+ * ③ FIXED: 列印學習單
+ * 使用預先存在的隱藏 iframe，不呼叫 window.open，
+ * 完全避免彈出視窗封鎖問題，相容所有載具。
+ */
+function printWorksheet(mode){
+  if(!app.wsHtml){
+    Swal.fire({icon:'warning',title:'請先生成講義'});
+    return;
+  }
+
+  let html = app.wsHtml;
+
+  // 學生版：隱藏解答區塊（CSS 注入）
+  if(mode === 'student'){
+    const hideStyle = [
+      '<style>',
+      '  .answer-section,',
+      '  .answer-key,',
+      '  [class*="answer"],',
+      '  [id*="answer"],',
+      '  [class*="solution"],',
+      '  [id*="solution"]{',
+      '    display:none!important;',
+      '    visibility:hidden!important;',
+      '  }',
+      '  @media print{',
+      '    .answer-section,[class*="answer"],[id*="answer"]{display:none!important;}',
+      '  }',
+      '</style>'
+    ].join('\n');
+    // 注入到 </head> 之前，若無 </head> 則直接前置
+    html = html.includes('</head>')
+      ? html.replace('</head>', hideStyle + '</head>')
+      : hideStyle + html;
+  }
+
+  // 加入自動觸發列印的腳本（iframe 載入完成後觸發）
+  const printScript = `<script>
+    (function(){
+      function doPrint(){
+        try{ window.focus(); window.print(); }catch(e){}
+      }
+      if(document.readyState==='complete') doPrint();
+      else window.addEventListener('load', doPrint, {once:true});
+    })();
+  <\/script>`;
+  html = html.includes('</body>')
+    ? html.replace('</body>', printScript + '</body>')
+    : html + printScript;
+
+  // 取得預先放好的隱藏列印 iframe，直接寫入觸發列印
+  const frame = document.getElementById('hidden-print-frame');
+  if(!frame){
+    // 極端情況：DOM 裡沒找到，動態建立
+    const newFrame = document.createElement('iframe');
+    newFrame.id = 'hidden-print-frame';
+    newFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;pointer-events:none;';
+    document.body.appendChild(newFrame);
+    _writeToIframe(newFrame, html);
+    return;
+  }
+  _writeToIframe(frame, html);
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1273,7 +1424,6 @@ async function loadSettingsTab(){
 async function saveQuizCount(){try{const msg=await API.updateQuizSettings(document.getElementById('setting-quiz-count').value);Swal.fire({icon:'success',title:msg,timer:1500,showConfirmButton:false});}catch(e){Swal.fire({icon:'error',title:'儲存失敗',text:e.message});}}
 async function saveFolderId(){
   let raw=document.getElementById('setting-folder-id').value.trim();
-  // 支援直接貼入 Google Drive 完整 URL，自動提取 folder ID
   const m=raw.match(/\/folders\/([a-zA-Z0-9_-]+)/);
   if(m) raw=m[1];
   else{const m2=raw.match(/^([a-zA-Z0-9_-]{20,})$/);if(m2)raw=m2[1];}
@@ -1305,6 +1455,7 @@ async function initDB(){
 function startQuiz(questions){
   app.quizQuestions=questions;app.qIndex=0;app.answers=[];app.startTime=Date.now();
   const student=app.currentStudent,task=app.currentTask;
+  // ① 使用 formatStudentLabel 確保去識別化
   const label=formatStudentLabel(student);
   document.getElementById('quiz-student-label').textContent=`${label} ｜ ${task?.taskName||''}`;
   if(app.timerInterval)clearInterval(app.timerInterval);
@@ -1392,6 +1543,7 @@ async function finishQuiz(){
   try{await API.submitQuizResult({taskName:app.currentTask?.taskName||'',number:app.currentStudent.number,name:app.currentStudent.name,score,elapsed,details:app.answers});}
   catch(e){console.warn('提交結果失敗:',e.message);}
   showView('result');
+  // ① FIXED: 結果頁一律使用 formatStudentLabel 去識別化
   const label=formatStudentLabel(app.currentStudent);
   document.getElementById('result-name').textContent=label;
   document.getElementById('result-score').textContent=score+' 分';
@@ -1411,21 +1563,44 @@ async function finishQuiz(){
 }
 
 /* ═══════════════════════════════════════════════════════
-   ⑯ 計算紙
+   ⑯ ① FIXED: 計算紙（完整修正版）
 ═══════════════════════════════════════════════════════ */
+
+/** 開啟或關閉計算紙 modal */
 function toggleScratch(){
-  const modal=document.getElementById('scratch-modal');
-  const isOpen=modal.style.display==='flex';
-  modal.style.display=isOpen?'none':'flex';
-  if(!isOpen) setTimeout(()=>document.getElementById('scratch-pad').focus(),100);
+  const modal = document.getElementById('scratch-modal');
+  const isOpen = modal.classList.contains('is-open');
+  if(isOpen){
+    closeScratch();
+  } else {
+    modal.classList.add('is-open');
+    // 稍延後 focus，等動畫完成後再彈出鍵盤（iOS 需要）
+    setTimeout(()=>{
+      const pad = document.getElementById('scratch-pad');
+      if(pad){
+        pad.focus();
+        // iOS 強制滾動到可見位置
+        pad.scrollIntoView({behavior:'smooth', block:'nearest'});
+      }
+    }, 150);
+  }
 }
-function closeScratch(e){
-  // 只有點到背景遮罩才關閉（不是點到 scratch-inner 裡的元素）
-  if(!e||!e.target)return;
-  const inner=document.getElementById('scratch-inner');
-  if(!inner.contains(e.target)) document.getElementById('scratch-modal').style.display='none';
+
+/**
+ * 關閉計算紙
+ * ① FIXED: 不需要傳入 event，直接從 class 控制顯示，
+ *    按鈕呼叫 closeScratch() 不傳參數也能正確關閉。
+ */
+function closeScratch(){
+  const modal = document.getElementById('scratch-modal');
+  modal.classList.remove('is-open');
 }
-function clearScratch(){document.getElementById('scratch-pad').value='';}
+
+/** 清空計算紙內容 */
+function clearScratch(){
+  const pad = document.getElementById('scratch-pad');
+  if(pad) pad.value = '';
+}
 
 /* ═══════════════════════════════════════════════════════
    ⑰ GAS 網址設定
