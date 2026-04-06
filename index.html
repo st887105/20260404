@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.0)</title>
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.1)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.5/dist/signature_pad.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
@@ -24,12 +25,10 @@
     .card{border-radius:var(--radius-card);border:none;box-shadow:var(--shadow-card);}
     .login-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,460px));justify-content:center;gap:1.2rem;}
 
-    /* ── 操作說明按鈕 ── */
     #help-btn-area{margin-top:14px;text-align:center;}
     #help-btn-area a{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#ff9800,#f57c00);color:#fff;border-radius:30px;padding:10px 28px;font-size:.95rem;font-weight:700;text-decoration:none;box-shadow:0 4px 12px rgba(245,124,0,.35);transition:transform .18s,box-shadow .18s;}
     #help-btn-area a:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(245,124,0,.45);}
 
-    /* ── Option buttons ── */
     .option-btn{display:flex;align-items:flex-start;width:100%;padding:13px 16px;margin-bottom:9px;border:2px solid #e0e0e0;border-radius:12px;background:#fff;text-align:left;font-size:1rem;cursor:pointer;transition:all .2s;}
     .option-btn:hover:not(:disabled){border-color:var(--primary);background:#f0f8ff;}
     .option-btn.selected{background:#e3f2fd;border-color:var(--primary);font-weight:600;color:var(--primary-dark);}
@@ -53,46 +52,18 @@
     .err-bar{height:8px;border-radius:4px;background:#e0e0e0;overflow:hidden;margin:4px 0;}
     .err-fill{height:100%;border-radius:4px;transition:width .6s;}
 
-    /* ── 計算紙 ── */
+    /* ★ 修正 1：計算紙樣式重構 */
     #scratch-btn{position:fixed;bottom:80px;right:18px;z-index:1000;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;font-size:1.2rem;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;display:none;align-items:center;justify-content:center;}
-    /* 改用 display:none/flex 切換，避免 iOS Safari 在 visibility:hidden 父層中 focus 失效 */
-    #scratch-modal{position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;cursor:pointer;
-      /* iOS Safari: 必須讓整個 overlay 可接受觸控 */
-      -webkit-tap-highlight-color:transparent;}
+    #scratch-modal{position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;}
     #scratch-modal.is-open{display:flex;}
-    #scratch-inner{
-      cursor:default;background:#fff;width:100%;max-width:640px;
-      border-radius:20px 20px 0 0;padding:16px;
-      max-height:75vh;display:flex;flex-direction:column;
-      box-shadow:0 -4px 20px rgba(0,0,0,.15);
-      padding-bottom:max(16px,env(safe-area-inset-bottom));
-      /* 讓 inner 本身可滾動，避免外層 overflow 影響 textarea */
-      overflow-y:auto;-webkit-overflow-scrolling:touch;
-    }
-    #scratch-pad{
-      flex:1;resize:none;
-      border:2px solid #e0e0e0;border-radius:10px;
-      padding:12px;font-size:1rem;line-height:1.6;
-      min-height:220px;
-      /* 關鍵：iOS 需要這些屬性才能正常輸入 */
-      -webkit-user-select:text!important;user-select:text!important;
-      pointer-events:auto!important;
-      touch-action:manipulation;
-      -webkit-appearance:none;appearance:none;
-      /* 避免 iOS 自動縮放 */
-      font-size:max(16px,1rem);
-      cursor:text;
-      /* 讓 textarea 自身處理滾動 */
-      overflow-y:auto;-webkit-overflow-scrolling:touch;
-    }
-    #scratch-pad:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px rgba(30,136,229,.15);}
+    #scratch-inner{cursor:default;background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:16px;box-shadow:0 -4px 20px rgba(0,0,0,.15);padding-bottom:max(16px,env(safe-area-inset-bottom));}
+    /* 改回 canvas */
+    #scratch-pad{width:100%; height:35vh; min-height:250px; border:2px dashed #b0bec5; border-radius:10px; background:#fff; touch-action:none; cursor:crosshair;}
 
-    /* ── 學習單 iframe ── */
     #ws-preview-area{border-radius:12px;margin-top:12px;border:1px solid #e0e0e0;-webkit-overflow-scrolling:touch;overflow:auto;}
     #ws-preview-frame{width:100%;height:75vh;min-height:500px;border:none;display:block;overflow:auto;}
     #hidden-print-frame{position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;pointer-events:none;visibility:hidden;}
 
-    /* ── 學習單管理卡片（仿題庫管理） ── */
     .ws-mgmt-card{border:2px solid #ffe082;border-radius:14px;padding:18px;background:#fffde7;}
     .ws-mgmt-card h6{color:#e65100;font-weight:700;}
 
@@ -145,13 +116,12 @@
         <button class="btn btn-outline-secondary btn-sm" onclick="closeScratch()">收起</button>
       </div>
     </div>
-    <textarea id="scratch-pad" placeholder="在這裡進行計算草稿…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+    <canvas id="scratch-pad"></canvas>
   </div>
 </div>
 
 <main class="container-fluid px-2 px-md-4">
 
-  <!-- ════ 登入 ════ -->
   <div id="view-login" class="fade-in">
     <div class="login-grid mx-auto" style="max-width:960px;">
       <div class="card p-4">
@@ -186,7 +156,6 @@
       </div>
     </div>
 
-    <!-- ④ 操作說明按鈕區（預設隱藏，loadTasksForLogin 取到 URL 後顯示） -->
     <div id="help-btn-area" style="display:none;" class="mt-3">
       <a id="help-btn-link" href="#" target="_blank" rel="noopener">
         <i class="fa-solid fa-circle-question"></i>操作說明
@@ -194,7 +163,6 @@
     </div>
   </div>
 
-  <!-- ════ 管理後台 ════ -->
   <div id="view-admin" style="display:none;" class="fade-in">
     <div class="row justify-content-center">
       <div class="col-12 col-xl-11">
@@ -213,7 +181,6 @@
           </ul>
           <div class="tab-content">
 
-            <!-- 快速精靈 -->
             <div class="tab-pane fade show active" id="tab-wizard">
               <div class="alert alert-success py-2 px-3 small mb-3"><b>🚀 快速設定精靈</b>：不需要 Excel，直接輸入學生資料與弱點節點，一鍵建立任務並出題。</div>
               <div class="card border-0 bg-light p-3 mb-3">
@@ -257,7 +224,6 @@
               </div>
             </div>
 
-            <!-- Excel 上傳 -->
             <div class="tab-pane fade" id="tab-upload">
               <div class="row g-3">
                 <div class="col-12 col-md-4"><label class="form-label fw-bold small">任務名稱</label><input id="task-name" type="text" class="form-control" placeholder="例：五年甲班114上學力檢測"></div>
@@ -268,7 +234,6 @@
                   <div class="alert alert-primary py-2 px-3 small mb-2"><b>📋 格式：</b>A欄=座號、B欄=姓名、C欄起=弱點知識節點名稱</div>
                   <input type="file" id="excel-file" class="form-control" accept=".xlsx,.xls,.csv" onchange="previewExcel()">
                 </div>
-                <!-- ② Excel 預覽：顯示全部學生（移除 slice(0,5) 限制） -->
                 <div class="col-12" id="excel-preview-area" style="display:none;">
                   <div class="card bg-light p-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
@@ -302,35 +267,29 @@
               </div>
             </div>
 
-            <!-- 題庫管理 -->
             <div class="tab-pane fade" id="tab-bank"><div id="bank-status"><div class="text-muted small">點擊「題庫管理」標籤載入…</div></div></div>
 
-            <!-- 成績查詢 -->
             <div class="tab-pane fade" id="tab-results">
               <div class="row g-2 mb-3"><div class="col-12 col-md-6"><label class="form-label fw-bold small">選擇任務</label><select id="results-task" class="form-select" onchange="loadResults()"><option value="">-- 請選擇 --</option></select></div></div>
               <div id="results-area"></div>
             </div>
 
-            <!-- 差異化分析 -->
             <div class="tab-pane fade" id="tab-analysis">
               <div class="row g-2 mb-3"><div class="col-12 col-md-6"><label class="form-label fw-bold small">選擇任務</label><select id="analysis-task" class="form-select" onchange="loadAnalysis()"><option value="">-- 請選擇 --</option></select></div></div>
               <div id="analysis-area"></div>
-              <!-- ③ 差異化學習單管理區（仿題庫管理卡片式） -->
+              
               <div class="mt-3" id="worksheet-area" style="display:none;">
                 <div class="ws-mgmt-card">
                   <h6><i class="fa-solid fa-file-lines me-1"></i>AI 差異化補教講義</h6>
-                  <!-- 狀態 A：尚未生成 -->
                   <div id="ws-state-idle">
                     <button class="btn btn-warning btn-sm" onclick="genWorksheet()">
                       <i class="fa-solid fa-wand-magic-sparkles me-1"></i>生成講義（取前3大弱點節點）
                     </button>
                   </div>
-                  <!-- 進度條 -->
                   <div id="ws-gen-progress" style="display:none;" class="mt-2">
                     <div class="progress quiz-progress mb-1"><div id="ws-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width:0%"></div></div>
                     <span id="ws-progress-msg" class="text-muted small">生成中…</span>
                   </div>
-                  <!-- 狀態 B：已生成 — 操作列 -->
                   <div id="ws-state-done" style="display:none;" class="mt-2">
                     <div class="d-flex gap-2 flex-wrap align-items-center">
                       <button class="btn btn-warning btn-sm" onclick="genWorksheet()">
@@ -346,7 +305,6 @@
                         <i class="fa-solid fa-print me-1"></i>學生版
                       </button>
                     </div>
-                    <!-- ③ iframe 預覽（預設收起，由 toggleWsPreview 控制） -->
                     <div id="ws-preview-area" style="display:none;">
                       <iframe id="ws-preview-frame" title="差異化學習單預覽" scrolling="yes"></iframe>
                     </div>
@@ -355,7 +313,6 @@
               </div>
             </div>
 
-            <!-- 系統設定 -->
             <div class="tab-pane fade" id="tab-settings">
               <div class="row g-4">
                 <div class="col-12 col-lg-5">
@@ -363,19 +320,16 @@
                     <h6 class="fw-bold mb-3"><i class="fa-solid fa-sliders me-1"></i>基本設定</h6>
                     <div class="mb-3"><label class="form-label text-muted small fw-bold">學生測驗題數</label><div class="input-group"><input type="number" id="setting-quiz-count" class="form-control" min="1" max="50"><button class="btn btn-primary" onclick="saveQuizCount()">儲存</button></div></div>
                     <div class="mb-3"><label class="form-label text-muted small fw-bold">PDF 教材資料夾 ID</label><div class="input-group"><input type="text" id="setting-folder-id" class="form-control" placeholder="（選填）"><button class="btn btn-warning" onclick="saveFolderId()">儲存</button></div></div>
-                    <!-- ④ 操作說明網址設定 -->
                     <div class="mb-3">
                       <label class="form-label text-muted small fw-bold"><i class="fa-solid fa-circle-question me-1 text-warning"></i>操作說明網址（首頁按鈕）</label>
                       <div class="input-group">
                         <input type="text" id="setting-help-url" class="form-control" placeholder="https://... 留空則隱藏按鈕">
                         <button class="btn btn-warning" onclick="saveHelpUrl()">儲存</button>
                       </div>
-                      <div class="small text-muted mt-1">填入後，首頁將顯示「操作說明」按鈕，連結至此網址。</div>
                     </div>
                     <hr>
                     <div class="mb-3">
                       <label class="form-label text-muted small fw-bold">AI 模型選擇</label>
-                      <!-- ★ 改為下拉選單，預設最佳模型優先 -->
                       <div class="input-group input-group-sm">
                         <select id="setting-gemini-model" class="form-select font-monospace">
                           <optgroup label="🏆 推薦（免費配額充足）">
@@ -396,14 +350,6 @@
                         <button class="btn btn-outline-primary" onclick="saveGeminiSettings()">儲存</button>
                       </div>
                       <div class="form-check mt-1"><input class="form-check-input" type="checkbox" id="setting-is-paid"><label class="form-check-label small" for="setting-is-paid">付費帳號（解除速率限制）</label></div>
-                      <div class="small text-muted mt-1">
-                        免費推薦：<code>gemma-4-31b-it</code>（1500次/天）<br>
-                        次選：<code>gemini-2.5-flash</code> / <code>gemini-2.0-flash-lite</code>
-                        <span id="gemini-status-badge" class="ms-2"></span>
-                      </div>
-                      <div class="alert alert-info py-2 px-3 mt-2 small">
-                        💡 <b>模型降級保護：</b>若首選模型配額不足，系統自動依序嘗試備用模型，確保出題不中斷。
-                      </div>
                     </div>
                     <hr>
                     <button class="btn btn-outline-danger w-100 mb-2" onclick="API.clearBankCache().then(m=>Swal.fire({icon:'success',title:m,timer:1500,showConfirmButton:false})).catch(e=>Swal.fire({icon:'error',title:e.message}))"><i class="fa-solid fa-broom me-1"></i>清除題庫快取</button>
@@ -432,7 +378,6 @@
     </div>
   </div>
 
-  <!-- ════ 測驗 ════ -->
   <div id="view-quiz" style="display:none;" class="fade-in">
     <div class="row justify-content-center">
       <div class="col-12 col-md-9 col-lg-7">
@@ -459,7 +404,6 @@
     </div>
   </div>
 
-  <!-- ════ 成績結果 ════ -->
   <div id="view-result" style="display:none;" class="fade-in">
     <div class="row justify-content-center">
       <div class="col-12 col-md-8 col-lg-6">
@@ -480,7 +424,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Apps Script × GitHub 協作 ｜ v9.0 ｜
+    車城國小資訊老師 @ Google Apps Script × GitHub 協作 ｜ v9.1 ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -488,9 +432,6 @@
 <script>
 'use strict';
 
-/* ═══════════════════════════════════════════════════════
-   常數 & 應用狀態
-═══════════════════════════════════════════════════════ */
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvgu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
 const app = {
   gasUrl: localStorage.getItem('gasUrl') || DEFAULT_GAS_URL,
@@ -502,46 +443,30 @@ const app = {
   wsHtml:'', wsPreviewOpen: false,
 };
 
-/* ═══════════════════════════════════════════════════════
-   API 層
-   ─────────────────────────────────────────────────────
-   關鍵修正：
-   1. redirect:'follow' — GAS 會做 302 redirect，
-      若不 follow，POST body 會在 redirect 後遺失
-   2. submitQuizResult 獨立重試機制（最多3次）
-      確保成績一定能提交到後台
-═══════════════════════════════════════════════════════ */
 const API = {
   _call: async (action, data={}) => {
     const resp = await fetch(app.gasUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain'},
       body:JSON.stringify({action,data}),
-      redirect:'follow'   // ★ 修正：GAS 302 redirect 後 body 不丟失
+      redirect:'follow'
     });
     if(!resp.ok) throw new Error(`HTTP ${resp.status}：無法連線 GAS`);
     const json = await resp.json();
     if(json.status!=='success') throw new Error(json.message||'後端錯誤');
     return json.data;
   },
-  /* ★ 修正：成績提交專用，失敗自動重試最多3次，確保成績一定寫入後台 */
   _submitWithRetry: async (action, data={}, maxRetries=3) => {
     let lastError;
     for(let attempt=1; attempt<=maxRetries; attempt++){
       try{
-        const resp = await fetch(app.gasUrl,{
-          method:'POST',
-          headers:{'Content-Type':'text/plain'},
-          body:JSON.stringify({action,data}),
-          redirect:'follow'
-        });
+        const resp = await fetch(app.gasUrl,{ method:'POST', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({action,data}), redirect:'follow' });
         if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         if(json.status!=='success') throw new Error(json.message||'後端錯誤');
         return json.data;
       }catch(e){
         lastError=e;
-        console.warn(`[submitRetry] 第${attempt}次失敗：${e.message}`);
         if(attempt<maxRetries) await new Promise(r=>setTimeout(r,1500*attempt));
       }
     }
@@ -573,49 +498,79 @@ const API = {
   getQuestionErrorRates:(n)=>API._call('getQuestionErrorRates',{taskName:n}),
   getPracticeQuestionsForErrors:(n)=>API._call('getPracticeQuestionsForErrors',{taskName:n}),
   getTaskQuestions:(n)=>API._call('getTaskQuestions',{taskName:n}),
-  /* ④ HelpUrl API */
   getHelpUrl:()=>API._call('getHelpUrl'),
   updateHelpUrl:(url,pwd)=>API._call('updateHelpUrl',{url,pwd}),
 };
 
-/* ═══════════════════════════════════════════════════════
-   視圖切換
-═══════════════════════════════════════════════════════ */
 function showView(name){
-  ['login','admin','quiz','result'].forEach(v=>{
-    document.getElementById('view-'+v).style.display=(v===name)?'':'none';
-  });
+  ['login','admin','quiz','result'].forEach(v=>{ document.getElementById('view-'+v).style.display=(v===name)?'':'none'; });
   document.getElementById('scratch-btn').style.display=(name==='quiz')?'flex':'none';
   if(name!=='quiz') closeScratch();
 }
 
-window.addEventListener('DOMContentLoaded',()=>{
-  showView('login');
-  loadTasksForLogin();
+window.addEventListener('DOMContentLoaded', () => {
+  // ★ 修正 4：路由攔截，檢測是否為分享的專屬錯題連結
+  const urlParams = new URLSearchParams(window.location.search);
+  const practiceTask = urlParams.get('practice');
+  
+  if (practiceTask) {
+    showView('login'); // 暫時顯示背景
+    initPracticeMode(practiceTask);
+  } else {
+    showView('login');
+    loadTasksForLogin();
+  }
+  
   document.getElementById('wiz-custom-node')?.addEventListener('keydown',e=>{if(e.key==='Enter')addWizCustomNode();});
   updateWizNodePresets();
   addWizStudentRows(5);
 
-  /* ── 計算紙 Modal 事件（跨平台修正版）──
-   * 核心原則：只判斷 e.target 是否為 overlay 本身，不 stopPropagation
-   * stopPropagation 在 iOS 上會切斷 user-gesture 鏈，導致 textarea 無法獲得焦點 */
   const modal=document.getElementById('scratch-modal');
   modal.addEventListener('pointerdown',e=>{
     if(e.target===modal) closeScratch();
   });
+  
+  // 初始化畫布
+  initCanvas();
 });
 
-/* ═══════════════════════════════════════════════════════
-   ④ 操作說明：載入時同步取得 HelpUrl
-═══════════════════════════════════════════════════════ */
+/* ★ 修正 4：專屬錯題練習模式初始化 */
+async function initPracticeMode(taskName) {
+  const { value: stuName } = await Swal.fire({
+    title: `🏆 進入補救練習`,
+    html: `目前任務：<b>${esc(taskName)}</b>`,
+    input: 'text',
+    inputPlaceholder: '請輸入您的姓名',
+    allowOutsideClick: false,
+    inputValidator: (v) => !v ? '姓名不可為空' : null
+  });
+  if (!stuName) return;
+
+  Swal.fire({title:'載入錯題庫中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading()});
+  try {
+    const data = await API.getPracticeQuestionsForErrors(taskName);
+    Swal.close();
+    if (!data || !data.length) return Swal.fire('錯誤', '此任務無足夠錯題資料', 'error');
+
+    // 展開由後端依照節點分組回傳的錯題
+    const allQs = data.flatMap(d => d.questions.map(q => ({...q, node: d.node})));
+    if (!allQs.length) return Swal.fire('錯誤', '無錯題', 'error');
+
+    app.currentTask = { taskName: taskName + '_補救練習' };
+    app.currentStudent = { name: stuName, number: '特別練習' };
+    startQuiz(allQs);
+  } catch(e) {
+    Swal.fire('錯誤', e.message, 'error');
+  }
+}
+
 async function loadTasksForLogin(){
   const sel=document.getElementById('login-task'),msg=document.getElementById('login-status-msg');
   sel.innerHTML='<option value="">-- 連線中… --</option>';
   try{
-    // 並行請求：任務清單 + 操作說明網址
     const [tasks, helpUrl] = await Promise.all([
       API.getTasks(),
-      API.getHelpUrl().catch(()=>'')  // HelpUrl 失敗不影響主流程
+      API.getHelpUrl().catch(()=>'')
     ]);
     app.taskList = tasks;
     if(!tasks.length){
@@ -633,22 +588,11 @@ async function loadTasksForLogin(){
   }
 }
 
-/**
- * ④ 套用 HelpUrl 到首頁按鈕
- */
 function _applyHelpUrl(url){
   const area=document.getElementById('help-btn-area'),link=document.getElementById('help-btn-link');
-  if(url && url.trim() && url.startsWith('http')){
-    link.href=url.trim();
-    area.style.display='';
-  } else {
-    area.style.display='none';
-  }
+  if(url && url.trim() && url.startsWith('http')){ link.href=url.trim(); area.style.display=''; } else { area.style.display='none'; }
 }
 
-/**
- * ④ 儲存 HelpUrl
- */
 async function saveHelpUrl(){
   const url=document.getElementById('setting-help-url').value.trim();
   try{
@@ -657,25 +601,9 @@ async function saveHelpUrl(){
   }catch(e){Swal.fire({icon:'error',title:'儲存失敗',text:e.message});}
 }
 
-/* ═══════════════════════════════════════════════════════
-   ① 姓名去識別化（完整修正版）
-   ─────────────────────────────────────────────────────
-   Root Cause 確認：
-   1. GAS getStudents 已在後端做 number/name 分離，
-      但某些情況 name 欄仍含「弱點數量」數字後綴。
-   2. 前端 anonymizeName 剝離尾部數字（/\s*\d+\s*$/）
-      處理此邊界情況。
-   3. formatStudentLabel 雙層防禦確保任何格式都能
-      正確顯示匿名標籤。
-═══════════════════════════════════════════════════════ */
-
-/**
- * 將姓名匿名化：首末字保留，中間換成○
- */
 function anonymizeName(name){
   const raw=String(name==null?'':name).trim();
   if(!raw||raw==='null'||raw==='undefined') return '';
-  // 剝離尾部數字（如「龔家堂 2」→「龔家堂」）
   const s=raw.replace(/\s*\d+\s*$/,'').trim();
   if(!s) return raw;
   if(s.length===1) return s;
@@ -683,16 +611,10 @@ function anonymizeName(name){
   return s[0]+'○'.repeat(s.length-2)+s[s.length-1];
 }
 
-/**
- * 格式化學生標籤（下拉選單 / 測驗頁 / 結果頁 統一使用）
- * Layer 1：使用 s.name
- * Layer 2：name 空白時從 s.number 提取中文姓名
- */
 function formatStudentLabel(s){
   if(!s) return '—';
   let numStr=String(s.number==null?'':s.number).trim();
   let nameRaw=String(s.name==null?'':s.name).trim();
-  // Layer 2：name 欄空白時，從 number 欄提取中文姓名
   if(!nameRaw||nameRaw==='null'||nameRaw==='undefined'){
     const m=numStr.match(/號\s*([\u4e00-\u9fa5]{2,4})(?:\s+\d+)?$/);
     if(m){nameRaw=m[1];numStr=numStr.replace(/\s+[\u4e00-\u9fa5]{2,4}(?:\s+\d+)?$/,'').trim();}
@@ -701,9 +623,6 @@ function formatStudentLabel(s){
   return anon?`${numStr} ${anon}`:numStr;
 }
 
-/* ═══════════════════════════════════════════════════════
-   學生登入
-═══════════════════════════════════════════════════════ */
 async function onTaskChange(){
   const taskName=document.getElementById('login-task').value;
   const numSel=document.getElementById('login-number');
@@ -712,7 +631,6 @@ async function onTaskChange(){
   try{
     app.studentList=await API.getStudents(taskName);
     if(!app.studentList.length){numSel.innerHTML='<option value="">-- 此任務無學生資料 --</option>';return;}
-    // ① 使用 formatStudentLabel 渲染去識別化標籤
     numSel.innerHTML='<option value="">-- 請選擇姓名 --</option>'+
       app.studentList.map(s=>`<option value="${esc(s.number)}">${esc(formatStudentLabel(s))}</option>`).join('');
   }catch(e){numSel.innerHTML=`<option value="">-- 載入失敗：${e.message} --</option>`;}
@@ -739,9 +657,6 @@ async function studentLogin(){
   }catch(e){Swal.close();Swal.fire({icon:'error',title:'載入題目失敗',text:e.message});}
 }
 
-/* ═══════════════════════════════════════════════════════
-   教師登入
-═══════════════════════════════════════════════════════ */
 async function adminLogin(){
   const pwd=document.getElementById('admin-pwd').value;
   if(!pwd) return Swal.fire({icon:'warning',title:'請輸入管理員密碼'});
@@ -765,9 +680,6 @@ function populateAdminTaskDropdowns(){
   });
 }
 
-/* ═══════════════════════════════════════════════════════
-   節點有效性
-═══════════════════════════════════════════════════════ */
 function isValidNode(val){
   const s=String(val||'').trim();
   if(!s) return false;
@@ -777,9 +689,6 @@ function isValidNode(val){
   return true;
 }
 
-/* ═══════════════════════════════════════════════════════
-   ② Excel 解析 — 顯示全部學生（移除 slice 限制）
-═══════════════════════════════════════════════════════ */
 function previewExcel(){
   const file=document.getElementById('excel-file').files[0];
   const area=document.getElementById('excel-preview-area');
@@ -816,7 +725,6 @@ function previewExcel(){
       app.excelStudents=students;app.excelNodes=[...allNodes];
       document.getElementById('preview-count').textContent=`共 ${students.length} 位學生`;
 
-      // ② 顯示「全部」學生，移除 .slice(0,5) 限制
       const thead=`<thead><tr><th>座號</th><th>原始姓名</th><th>匿名顯示</th><th>節點數</th><th>節點範例</th></tr></thead>`;
       const tbody='<tbody>'+students.map(s=>`<tr>
         <td>${esc(s.number)}</td>
@@ -843,9 +751,6 @@ function previewExcel(){
 }
 function toggleFolderInput(){document.getElementById('folder-input-area').style.display=(document.querySelector('input[name="gen-mode"]:checked').value==='ai')?'none':'';}
 
-/* ═══════════════════════════════════════════════════════
-   進度訊息輪替
-═══════════════════════════════════════════════════════ */
 const WAITING_MSGS=['☕ 泡杯茶放鬆，AI 正努力為學生出題中…','🤔 AI 正認真分析每道知識節點，請稍候…','📚 依據布魯姆認知層次，設計四個難度的題目…','✏️ 正在把關題目品質，確認選項與解析完整…','🎯 精準對焦學生弱點，客製化出題中…','🌟 AI 老師正埋頭苦幹，快了快了…','⏳ 免費版 AI 比較慢，感謝耐心等候！','🍵 已完成部分批次，繼續努力中…','💡 題目正在考慮要出 Level D、C、B 還是 A…','🚀 每道題都是為車城國小學生量身打造的！'];
 let _rotatorInterval=null,_rotMsgIdx=0,_waitStart=0;
 function startProgress(msgEl,timerEl){
@@ -857,9 +762,6 @@ function startProgress(msgEl,timerEl){
 function stopProgress(){if(_rotatorInterval){clearInterval(_rotatorInterval);_rotatorInterval=null;}}
 function elapsedStr(){const sec=Math.round((Date.now()-_waitStart)/1000),m=Math.floor(sec/60),s=sec%60;return m>0?`${m} 分 ${s} 秒`:`${s} 秒`;}
 
-/* ═══════════════════════════════════════════════════════
-   上傳並出題
-═══════════════════════════════════════════════════════ */
 async function uploadAndGenerate(){
   const taskName=document.getElementById('task-name').value.trim();
   const grade=document.getElementById('task-grade').value;
@@ -907,9 +809,6 @@ async function clearNodeBank(){
   catch(e){Swal.fire({icon:'error',title:'清除失敗',text:e.message});}
 }
 
-/* ═══════════════════════════════════════════════════════
-   ② 題庫管理 — 含全部學生名單按鈕
-═══════════════════════════════════════════════════════ */
 async function loadBankStatus(){
   const area=document.getElementById('bank-status');area.innerHTML='<div class="text-muted small">載入中…</div>';
   try{
@@ -944,9 +843,6 @@ async function loadBankStatus(){
   }catch(e){area.innerHTML=`<p class="text-danger">載入失敗：${e.message}</p>`;}
 }
 
-/**
- * ② 預覽全部學生名單（含匿名化）
- */
 async function previewStudentList(taskName){
   Swal.fire({title:'載入學生名單…',allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
@@ -971,18 +867,25 @@ async function previewStudentList(taskName){
   }catch(e){Swal.close();Swal.fire({icon:'error',title:'載入失敗',text:e.message});}
 }
 
+/* ★ 修正 3：預覽所有題庫，不再使用 slice(0,5) */
 async function previewBankQuestions(taskName){
   Swal.fire({title:'載入題目預覽…',allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
-    const sample=await API.generateQuiz(null,taskName);Swal.close();
-    if(!sample||!sample.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
-    const previewHtml=sample.slice(0,5).map((q,i)=>{
-      const lvColor={'A':'badge-A','B':'badge-B','C':'badge-C','D':'badge-D'},lv=q.level||'D';
-      const opts=(q.options||[]).map((o,j)=>{const isCorrect='ABCD'[j]===q.answer;return `<div class="py-1 d-flex align-items-start gap-1"><span class="badge ${isCorrect?'bg-success':'bg-light text-dark border'}">${'ABCD'[j]}</span><span class="small">${esc(o)}</span></div>`;}).join('');
-      const hint=q.hint?q.hint.replace(/^\[Level [ABCD]\]\s*/,''):'';
-      return `<div class="border rounded p-3 mb-2 text-start"><div class="d-flex justify-content-between align-items-start mb-1"><span class="small fw-bold text-muted">【${esc(q.node)}】</span><span class="badge ${lvColor[lv]||'bg-secondary'} ms-2 flex-shrink-0">Level ${lv}</span></div><div class="mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.7">${esc(q.text)}</div>${q.type==='single'?opts:''}<div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>${hint?`<div class="small text-secondary mt-1">💡 ${esc(hint)}</div>`:''}</div>`;
-    }).join('');
-    Swal.fire({title:`「${taskName}」題庫預覽（前5題）`,html:previewHtml,confirmButtonText:'關閉',width:'740px',customClass:{htmlContainer:'text-start px-2'}});
+    const res = await API.getTaskQuestions(taskName); 
+    Swal.close();
+    const qs = res.questions;
+    if(!qs||!qs.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
+    
+    // 將所有題目渲染成 HTML 並加入滾動條框架
+    const previewHtml = `<div style="max-height:60vh; overflow-y:auto; padding-right:8px;">` + 
+      qs.map((q,i)=>{
+        const lvColor={'A':'badge-A','B':'badge-B','C':'badge-C','D':'badge-D'},lv=q.level||'D';
+        const opts=(q.options||[]).map((o,j)=>{const isCorrect='ABCD'[j]===q.answer;return `<div class="py-1 d-flex align-items-start gap-1"><span class="badge ${isCorrect?'bg-success':'bg-light text-dark border'}">${'ABCD'[j]}</span><span class="small">${esc(o)}</span></div>`;}).join('');
+        const hint=q.hint?q.hint.replace(/^\[Level [ABCD]\]\s*/,''):'';
+        return `<div class="border rounded p-3 mb-3 text-start"><div class="d-flex justify-content-between align-items-start mb-1"><span class="small fw-bold text-muted">【${esc(q.node)}】 (第 ${i+1} 題)</span><span class="badge ${lvColor[lv]||'bg-secondary'} ms-2 flex-shrink-0">Level ${lv}</span></div><div class="mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.7">${esc(q.text)}</div>${q.type==='single'?opts:''}<div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>${hint?`<div class="small text-secondary mt-1">💡 ${esc(hint)}</div>`:''}</div>`;
+      }).join('') + `</div>`;
+      
+    Swal.fire({title:`「${taskName}」題庫預覽（共 ${qs.length} 題）`,html:previewHtml,confirmButtonText:'關閉',width:'740px',customClass:{htmlContainer:'text-start px-2'}});
   }catch(e){Swal.close();Swal.fire({icon:'error',title:'預覽失敗',text:e.message});}
 }
 
@@ -1016,9 +919,6 @@ async function regenTask(taskName){
   }
 }
 
-/* ═══════════════════════════════════════════════════════
-   成績查詢
-═══════════════════════════════════════════════════════ */
 async function loadResults(){
   const taskName=document.getElementById('results-task').value,area=document.getElementById('results-area');
   if(!taskName){area.innerHTML='';return;}area.innerHTML='<div class="text-muted small">載入中…</div>';
@@ -1039,13 +939,39 @@ async function loadResults(){
     area.innerHTML=html;
   }catch(e){area.innerHTML=`<p class="text-danger">載入失敗：${e.message}</p>`;}
 }
+
+/* ★ 修正 4：錯題類似題的進度條與專屬連結生成 */
 async function genSimilarPractice(taskName){
   const area=document.getElementById('similar-practice-area');if(!area)return;
-  area.innerHTML='<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>生成類似題中（約 15-30 秒）…</div>';
+  // 插入進度條 UI
+  area.innerHTML=`
+    <div id="sim-prog-area" class="mt-2">
+      <div class="d-flex justify-content-between small text-muted mb-1"><span id="sim-prog-msg">準備中…</span></div>
+      <div class="progress mb-2"><div id="sim-prog-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width:0%"></div></div>
+    </div>`;
+  const pMsg = document.getElementById('sim-prog-msg');
+  const bar = document.getElementById('sim-prog-bar');
+  
+  startProgress(pMsg);
+  let pct = 0;
+  const tick = setInterval(() => { pct = Math.min(pct + 5, 90); bar.style.width = pct + '%'; }, 800);
+
   try{
     const data=await API.getPracticeQuestionsForErrors(taskName);
-    if(!data||!data.length){area.innerHTML='<div class="alert alert-info small py-2">此任務尚無足夠錯誤資料。</div>';return;}
-    let html='<h6 class="fw-bold mb-3"><i class="fa-solid fa-dumbbell text-warning me-1"></i>錯誤率前3高類似題</h6>';
+    clearInterval(tick); stopProgress();
+    
+    if(!data||!data.length){area.innerHTML='<div class="alert alert-info small py-2">此任務尚無足夠錯題資料。</div>';return;}
+    
+    // 生成專屬連結
+    const shareUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
+
+    let html=`
+      <div class="alert alert-success mt-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div><strong>🔗 學生補救練習專屬連結已生成：</strong><br><a href="${shareUrl}" target="_blank" class="small">${shareUrl}</a></div>
+        <button class="btn btn-sm btn-success" onclick="navigator.clipboard.writeText('${shareUrl}').then(()=>Swal.fire({title:'已複製連結',timer:1000,showConfirmButton:false}))"><i class="fa-solid fa-copy me-1"></i>複製</button>
+      </div>
+      <h6 class="fw-bold mb-3 mt-4"><i class="fa-solid fa-dumbbell text-warning me-1"></i>錯誤率前3高類似題預覽</h6>`;
+      
     data.forEach(item=>{
       html+=`<div class="card mb-3 border-warning"><div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center"><span class="fw-bold small">【${esc(item.node)}】</span><span class="badge bg-danger">${item.errorCount} 位學生答錯</span></div><div class="card-body p-2">`;
       (item.questions||[]).forEach((q,qi)=>{
@@ -1055,13 +981,14 @@ async function genSimilarPractice(taskName){
       html+=`</div></div>`;
     });
     area.innerHTML=html;
-  }catch(e){area.innerHTML=`<div class="alert alert-danger small py-2">生成失敗：${e.message}</div>`;}
+  }catch(e){
+    clearInterval(tick); stopProgress();
+    area.innerHTML=`<div class="alert alert-danger small py-2">生成失敗：${e.message}</div>`;
+  }
 }
+
 function toggleResultDetail(ri){const row=document.getElementById('detail-row-'+ri);if(row)row.style.display=row.style.display==='none'?'':'none';}
 
-/* ═══════════════════════════════════════════════════════
-   差異化分析
-═══════════════════════════════════════════════════════ */
 async function loadAnalysis(){
   const taskName=document.getElementById('analysis-task').value,area=document.getElementById('analysis-area');
   if(!taskName){area.innerHTML='';return;}area.innerHTML='<div class="text-muted small">分析中…</div>';
@@ -1079,14 +1006,10 @@ async function loadAnalysis(){
     wsArea.dataset.grade=task?.grade||'';
     wsArea.dataset.subject=task?.subject||'';
     wsArea.dataset.nodes=JSON.stringify(nodes.slice(0,3).map(n=>n.node));
-    // 重置學習單狀態
     _resetWorksheetArea();
   }catch(e){area.innerHTML=`<p class="text-danger">分析失敗：${e.message}</p>`;}
 }
 
-/**
- * ③ 重置學習單管理區到「尚未生成」狀態
- */
 function _resetWorksheetArea(){
   document.getElementById('ws-state-idle').style.display='';
   document.getElementById('ws-state-done').style.display='none';
@@ -1096,7 +1019,6 @@ function _resetWorksheetArea(){
   if(toggleBtn){toggleBtn.innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';}
   app.wsHtml='';
   app.wsPreviewOpen=false;
-  // 清空舊 iframe，釋放 Blob URL
   const frame=document.getElementById('ws-preview-frame');
   if(frame){
     if(frame._blobUrl){URL.revokeObjectURL(frame._blobUrl);frame._blobUrl=null;}
@@ -1105,9 +1027,6 @@ function _resetWorksheetArea(){
   }
 }
 
-/**
- * ③ 切換預覽展開/收起
- */
 function toggleWsPreview(){
   const previewArea=document.getElementById('ws-preview-area');
   const btn=document.getElementById('ws-toggle-btn');
@@ -1115,7 +1034,6 @@ function toggleWsPreview(){
   if(app.wsPreviewOpen){
     previewArea.style.display='';
     btn.innerHTML='<i class="fa-solid fa-eye-slash me-1"></i>收起預覽';
-    // 確保 iframe 在可見狀態下重新寫入（解決 Safari 在 display:none 時不渲染問題）
     const frame=document.getElementById('ws-preview-frame');
     if(app.wsHtml && (!frame.src || frame.src==='about:blank') && !frame._blobUrl){
       _writeToIframe(frame, app.wsHtml);
@@ -1126,19 +1044,15 @@ function toggleWsPreview(){
   }
 }
 
-/**
- * ③ 生成學習單（FIXED：先顯示容器再寫入 iframe）
- */
+/* ★ 修正 2：差異化講義前端正確解析 JSON 並動態建構 HTML */
 async function genWorksheet(){
   const ws=document.getElementById('worksheet-area');
   const topNodes=JSON.parse(ws.dataset.nodes||'[]'),grade=ws.dataset.grade,subject=ws.dataset.subject;
   if(!topNodes.length) return Swal.fire({icon:'warning',title:'無弱點節點資料'});
 
-  // 切換到進度狀態
   document.getElementById('ws-state-idle').style.display='none';
   document.getElementById('ws-state-done').style.display='none';
   document.getElementById('ws-gen-progress').style.display='';
-  // 先收起舊預覽
   document.getElementById('ws-preview-area').style.display='none';
   app.wsPreviewOpen=false;
 
@@ -1148,21 +1062,38 @@ async function genWorksheet(){
   const tick=setInterval(()=>{progBar.style.width=Math.min(90,10+Math.round((Date.now()-_waitStart)/1000)*1.5)+'%';},2000);
 
   try{
-    const htmlContent=await API.generateTeachingWorksheet(topNodes,grade,subject);
+    // 後端回傳的其實是 JSON Object 陣列，我們要在這裡自己組裝成 HTML
+    const jsonArray = await API.generateTeachingWorksheet(topNodes,grade,subject);
     clearInterval(rot);clearInterval(tick);
     progBar.style.width='100%';progMsg.textContent='✅ 學習單生成完成！';
 
-    // 清理並補全 HTML
-    app.wsHtml=_sanitizeWsHtml(htmlContent);
+    let html = `<div class="p-4 bg-white" style="font-family:'Noto Sans TC',sans-serif;">`;
+    const grouped = {};
+    jsonArray.forEach(q => { if(!grouped[q.node]) grouped[q.node] = []; grouped[q.node].push(q); });
+    
+    Object.entries(grouped).forEach(([node, qs], gi) => {
+      html += `<div class="mb-4"><h4 style="color:#1565c0; background:#e3f2fd; padding:10px; border-radius:6px; font-weight:bold;">節點 ${gi+1}：${esc(node)}</h4>`;
+      qs.forEach((q, qi) => {
+        html += `<div class="mb-4 ps-2 ws-question">
+          <p style="font-size:1.1rem;"><strong>${qi+1}.</strong> ${esc(q.text).replace(/\n/g, '<br>')}</p>
+          <p class="small text-info mb-1" style="font-size:0.95rem;">💡 <strong>引導：</strong>${esc(q.step)}</p>
+          <p class="small text-warning mb-1" style="font-size:0.95rem;">🔑 <strong>提示：</strong>${esc(q.hint)}</p>
+          
+          <div class="answer-section mt-2 pt-2" style="border-top:1px dashed #e0e0e0; background:#f9f9f9; padding:10px; border-left:4px solid #4caf50;">
+            <p class="text-success fw-bold mb-0">✅ 解答：${esc(q.answer)}</p>
+          </div>
+          <div class="student-space" style="height:80px; border-bottom:1px solid #757575; margin-top:15px;"></div>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+    html += `</div>`;
+    
+    app.wsHtml = _sanitizeWsHtml(html);
 
-    // 切換到「已生成」狀態
     document.getElementById('ws-state-done').style.display='';
     document.getElementById('ws-toggle-btn').innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
-
-    // 進度條延遲隱藏
     setTimeout(()=>{document.getElementById('ws-gen-progress').style.display='none';},1800);
-
-    // 提示用戶點擊展開預覽
     Swal.fire({icon:'success',title:'學習單已生成！',text:'請點「展開預覽」查看或選擇教師版/學生版列印。',timer:2500,showConfirmButton:false});
 
   }catch(e){
@@ -1173,68 +1104,36 @@ async function genWorksheet(){
   }
 }
 
-/**
- * ③ 清理並補全 AI 生成的 HTML（確保 iframe 可正常渲染）
- */
-function _sanitizeWsHtml(raw){
-  // 移除 markdown fence
-  let html=String(raw||'').replace(/^```html\s*/i,'').replace(/```\s*$/,'').trim();
-  // 補齊完整 HTML 結構
+function _sanitizeWsHtml(html){
   if(!html.includes('<html')){
     html=`<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <style>
-      body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}
-      h1,h2,h3{color:#1e88e5;}table{border-collapse:collapse;width:100%;}
-      td,th{border:1px solid #ccc;padding:6px 10px;}
-      .answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
+      body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;line-height:1.8;}
+      h1,h2,h3,h4{color:#1e88e5;margin-bottom:15px;}
     </style></head><body>${html}</body></html>`;
   }
   return html;
 }
 
-/**
- * ③ FIXED: 可靠 iframe 寫入（三層降級：Blob URL → srcdoc → document.write）
- * Blob URL 是最可靠的方式，在 Safari 15+ / iOS 15+ 完全支援。
- */
 function _writeToIframe(frame, html){
   if(!frame||!html) return;
-  // 釋放舊的 Blob URL
-  if(frame._blobUrl){
-    URL.revokeObjectURL(frame._blobUrl);
-    frame._blobUrl=null;
-  }
-  // Layer 1: Blob URL（最穩定，跨平台相容性最佳）
+  if(frame._blobUrl){ URL.revokeObjectURL(frame._blobUrl); frame._blobUrl=null; }
   try{
     const blob=new Blob([html],{type:'text/html;charset=utf-8'});
     const url=URL.createObjectURL(blob);
     frame._blobUrl=url;
     frame.src=url;
     return;
-  }catch(e1){
-    console.warn('[Blob URL failed]',e1);
-  }
-  // Layer 2: srcdoc
-  try{
-    if('srcdoc' in frame){
-      frame.srcdoc=html;
-      return;
-    }
-  }catch(e2){
-    console.warn('[srcdoc failed]',e2);
-  }
-  // Layer 3: document.write（舊版 iOS 降級）
+  }catch(e1){ console.warn('[Blob URL failed]',e1); }
+  try{ if('srcdoc' in frame){ frame.srcdoc=html; return; } }catch(e2){}
   try{
     const doc=frame.contentDocument||frame.contentWindow?.document;
     if(doc){doc.open('text/html','replace');doc.write(html);doc.close();}
-  }catch(e3){
-    console.warn('[document.write failed]',e3);
-  }
+  }catch(e3){}
 }
 
-/**
- * ③ 列印學習單（教師版 / 學生版）
- */
+/* ★ 修正 2 列印樣式：老師版隱藏空格，學生版隱藏答案 */
 function printWorksheet(mode){
   if(!app.wsHtml){Swal.fire({icon:'warning',title:'請先生成講義'});return;}
   let html=app.wsHtml;
@@ -1246,15 +1145,11 @@ function printWorksheet(mode){
     });
   }else{html=`<body class="${bodyClass}">`+html+'</body>';}
   const printCSS=`<style>
-    body.print-student .answer-section,body.print-student .answer-key,body.print-student .answers,
-    body.print-student [class*="answer"],body.print-student [id*="answer"],
-    body.print-student [class*="solution"],body.print-student [id*="solution"],
-    body.print-student [class*="解答"],body.print-student [id*="解答"]{display:none!important;visibility:hidden!important;}
     @media print{
-      body.print-student .answer-section,body.print-student [class*="answer"],body.print-student [id*="answer"],
-      body.print-student [class*="solution"],body.print-student [class*="解答"]{display:none!important;}
-      .question,.ws-question,.exercise-item,table,.card{page-break-inside:avoid;break-inside:avoid;}
-      h1,h2,h3,h4,h5{page-break-after:avoid;break-after:avoid;}
+      body.print-student .answer-section { display: none !important; }
+      body.print-teacher .student-space { display: none !important; }
+      .ws-question { page-break-inside: avoid; break-inside: avoid; }
+      h4 { page-break-after: avoid; break-after: avoid; }
       *{-webkit-print-color-adjust:exact;color-adjust:exact;}
     }
   </style>`;
@@ -1266,9 +1161,6 @@ function printWorksheet(mode){
   _writeToIframe(frame,html);
 }
 
-/* ═══════════════════════════════════════════════════════
-   系統設定
-═══════════════════════════════════════════════════════ */
 async function loadSettingsTab(){
   try{
     const [settings,gemini,folderId,prompts,helpUrl]=await Promise.all([
@@ -1278,10 +1170,8 @@ async function loadSettingsTab(){
     document.getElementById('setting-quiz-count').value=settings.quizCount;
     document.getElementById('setting-folder-id').value=folderId||'';
     document.getElementById('setting-help-url').value=helpUrl||'';
-    // ★ 修正：select 元素用 value 指定選中項；若後台存的值不在選項中，動態新增
     const modelSel=document.getElementById('setting-gemini-model');
     const savedModel=gemini.model||'gemma-4-31b-it';
-    // 檢查是否有對應選項，沒有則新增
     if(![...modelSel.options].some(o=>o.value===savedModel)){
       const opt=document.createElement('option');opt.value=savedModel;opt.textContent=savedModel+'（自訂）';
       modelSel.appendChild(opt);
@@ -1292,9 +1182,9 @@ async function loadSettingsTab(){
     document.getElementById('prompt-chinese').value=prompts.chinesePrompt||'';
     document.getElementById('prompt-math-ws').value=prompts.mathWorksheetPrompt||'';
     document.getElementById('prompt-chinese-ws').value=prompts.chineseWorksheetPrompt||'';
-    document.getElementById('gemini-status-badge').innerHTML=`<span class="badge ${gemini.isPaid?'bg-success':'bg-secondary'}">${gemini.isPaid?'付費帳號':'免費帳號'}</span>`;
   }catch(e){console.warn('載入設定失敗:',e.message);}
 }
+
 async function saveQuizCount(){try{const msg=await API.updateQuizSettings(document.getElementById('setting-quiz-count').value);Swal.fire({icon:'success',title:msg,timer:1500,showConfirmButton:false});}catch(e){Swal.fire({icon:'error',title:'儲存失敗',text:e.message});}}
 async function saveFolderId(){
   let raw=document.getElementById('setting-folder-id').value.trim();
@@ -1317,9 +1207,6 @@ async function initDB(){
   try{const msg=await API.setupDatabase();Swal.fire({icon:'success',title:'初始化完成',html:msg.replace(/\n/g,'<br>'),confirmButtonText:'確定'});}catch(e){Swal.fire({icon:'error',title:'初始化失敗',text:e.message});}
 }
 
-/* ═══════════════════════════════════════════════════════
-   測驗流程
-═══════════════════════════════════════════════════════ */
 function startQuiz(questions){
   app.quizQuestions=questions;app.qIndex=0;app.answers=[];app.startTime=Date.now();
   document.getElementById('quiz-student-label').textContent=`${formatStudentLabel(app.currentStudent)} ｜ ${app.currentTask?.taskName||''}`;
@@ -1377,17 +1264,11 @@ async function finishQuiz(){
   const elapsed=Math.round((Date.now()-app.startTime)/1000),total=app.answers.length,correct=app.answers.filter(a=>a.correct).length;
   const score=total>0?Math.round(correct/total*100):0;
 
-  /* ★ 修正：成績提交失敗顯示警告，不再靜默吞掉
-   * 使用 _submitWithRetry 自動重試3次，三次全失敗才警告老師 */
-  let submitOk=false;
   try{
     await API.submitQuizResult({taskName:app.currentTask?.taskName||'',number:app.currentStudent.number,name:app.currentStudent.name,score,elapsed,details:app.answers});
-    submitOk=true;
   }catch(e){
-    console.error('[finishQuiz] 成績提交最終失敗：',e.message);
-    // 非同步警告，不阻塞結果頁顯示
     setTimeout(()=>{
-      Swal.fire({icon:'warning',title:'⚠️ 成績上傳失敗',html:`您的作答結果 <b>${score} 分</b> 已完成，但無法儲存到後台。<br><small class="text-muted">錯誤：${e.message}</small><br><br>請告知老師手動補登。`,confirmButtonText:'我知道了'});
+      Swal.fire({icon:'warning',title:'⚠️ 成績上傳失敗',html:`作答已完成 <b>${score} 分</b>，但無法自動回傳。<br><small class="text-muted">錯誤：${e.message}</small><br><br>請告知老師手動補登。`,confirmButtonText:'我知道了'});
     },500);
   }
 
@@ -1404,39 +1285,34 @@ async function finishQuiz(){
   document.getElementById('result-review').innerHTML=reviewHtml;
 }
 
-/* ═══════════════════════════════════════════════════════
-   計算紙
-   ─────────────────────────────────────────────────────
-   iOS Safari 關鍵修正：
-   1. focus() 必須在 user gesture 的同步呼叫鏈中執行
-      （setTimeout 會切斷手勢鏈，鍵盤不會彈出）
-   2. 改用 display:none/flex 切換（visibility:hidden 父層
-      會造成 iOS focus 事件被攔截）
-   3. readOnly 技巧：先設 readOnly=false 再 focus，
-      強制 iOS 重新評估輸入能力
-═══════════════════════════════════════════════════════ */
+/* ★ 修正 1：重新綁定 SignaturePad 實例 */
+let sigPad = null;
+function initCanvas() {
+  const canvas = document.getElementById('scratch-pad');
+  if (!canvas) return;
+  sigPad = new SignaturePad(canvas, { minWidth: 1.5, maxWidth: 3, penColor: '#1565c0' });
+}
+
 function toggleScratch(){
   const modal=document.getElementById('scratch-modal');
-  if(modal.classList.contains('is-open')){closeScratch();}
-  else{
+  if(modal.classList.contains('is-open')){
+    closeScratch();
+  } else{
     modal.classList.add('is-open');
-    // ★ 關鍵：在同一個 user gesture 事件鏈中同步 focus
-    const pad=document.getElementById('scratch-pad');
-    if(pad){
-      pad.readOnly=false; // 強制 iOS 重新評估
-      pad.focus();
-      // 將游標移到末尾
-      const len=pad.value.length;
-      try{pad.setSelectionRange(len,len);}catch(e){}
-    }
+    // 在 Modal 顯示後重新校準比例尺，避免筆跡飄移
+    setTimeout(() => {
+      const canvas = document.getElementById('scratch-pad');
+      const ratio = Math.max(window.devicePixelRatio || 1, 1);
+      canvas.width = canvas.offsetWidth * ratio;
+      canvas.height = canvas.offsetHeight * ratio;
+      canvas.getContext("2d").scale(ratio, ratio);
+      if(sigPad) sigPad.clear();
+    }, 50);
   }
 }
 function closeScratch(){document.getElementById('scratch-modal').classList.remove('is-open');}
-function clearScratch(){const pad=document.getElementById('scratch-pad');if(pad)pad.value='';}
+function clearScratch(){if(sigPad) sigPad.clear();}
 
-/* ═══════════════════════════════════════════════════════
-   快速設定精靈
-═══════════════════════════════════════════════════════ */
 const PRESET_NODES={
   '五年級':{'數學':['整數的四則運算','小數的乘除法','分數的加減法','分數的乘除法','概數與估算','面積與周長','圓面積與圓周長','比與比值','速率問題','體積與容積'],'國語':['字音辨識','字形與部首','詞語釋義','成語應用','句型仿作','閱讀理解-直述','閱讀理解-推論','修辭技巧','文章結構','標點符號']},
   '六年級':{'數學':['分數的乘除法','比與比值','速率問題','體積與容積','統計圖表','代數思維','圓面積與圓周長','比例關係','負數概念','柱狀體表面積'],'國語':['字音辨識','詞語釋義','成語應用','修辭技巧','閱讀理解-直述','閱讀理解-推論','閱讀理解-評鑑','文章結構','議論文分析','詩詞賞析']},
@@ -1478,26 +1354,17 @@ async function wizardCreateAndGenerate(){
   }catch(e){stopProgress();const elapsed=elapsedStr();pMsg.innerHTML=`<span class="text-danger">❌ 失敗（${elapsed}）：${esc(e.message)}</span>`;pEl.textContent='';Swal.fire({icon:'error',title:'建立失敗',html:`<b>錯誤：</b>${esc(e.message)}`,confirmButtonText:'我知道了'});}
 }
 
-/* ═══════════════════════════════════════════════════════
-   GAS 網址設定
-═══════════════════════════════════════════════════════ */
 function showGasUrlDialog(){
   Swal.fire({title:'設定 GAS 網址',html:`<p class="text-muted small mb-2">從 Google Apps Script「部署」頁面取得網址</p><input id="swal-gas-url" class="swal2-input" value="${esc(app.gasUrl)}" placeholder="https://script.google.com/macros/s/...">`,confirmButtonText:'儲存',cancelButtonText:'取消',showCancelButton:true,
     preConfirm:()=>{const val=document.getElementById('swal-gas-url').value.trim();if(!val.startsWith('https://script.google.com/')){Swal.showValidationMessage('請輸入有效的 GAS 網址');return false;}return val;}
   }).then(r=>{if(r.isConfirmed){app.gasUrl=r.value;localStorage.setItem('gasUrl',r.value);Swal.fire({icon:'success',title:'GAS 網址已儲存',timer:1200,showConfirmButton:false});loadTasksForLogin();}});
 }
 
-/* ═══════════════════════════════════════════════════════
-   KaTeX 渲染
-═══════════════════════════════════════════════════════ */
 function renderMathIn(el){
   if(!el||typeof renderMathInElement!=='function')return;
   try{renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false});}catch(e){}
 }
 
-/* ═══════════════════════════════════════════════════════
-   工具函式
-═══════════════════════════════════════════════════════ */
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function esc(str){return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 </script>
