@@ -1151,20 +1151,20 @@ function _sanitizeWsHtml(raw){
 
   // 【第四道】若只有 body 片段（無 <html>），補齊完整結構
   if(!s.includes('<html')){
-    s = \`<!DOCTYPE html><html lang="zh-TW"><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}
-  h1,h2,h3,h4{color:#1e88e5;} h1{font-size:1.4rem;} h2{font-size:1.2rem;} h3{font-size:1.1rem;}
-  table{border-collapse:collapse;width:100%;} td,th{border:1px solid #ccc;padding:6px 10px;}
-  .c-box,.c-level{border:2px solid #1565c0;padding:10px;margin:10px 0;border-radius:6px;}
-  .b-box,.b-level{border:2px solid #f57c00;padding:10px;margin:10px 0;border-radius:6px;}
-  .a-box,.a-level{border:2px solid #d32f2f;padding:10px;margin:10px 0;border-radius:6px;}
-  .answer-key,.answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
-  .student-space{height:60px;border-bottom:1px solid #aaa;margin:10px 0;}
-  .section{margin-bottom:20px;}
-</style></head><body>\${s}</body></html>\`;
+    s = '<!DOCTYPE html><html lang="zh-TW"><head>\n'
+      + '<meta charset="UTF-8">\n'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+      + '<style>\n'
+      + '  body{font-family:\'Noto Sans TC\',\'Microsoft JhengHei\',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}\n'
+      + '  h1,h2,h3,h4{color:#1e88e5;}\n'
+      + '  table{border-collapse:collapse;width:100%;} td,th{border:1px solid #ccc;padding:6px 10px;}\n'
+      + '  .c-box,.c-level{border:2px solid #1565c0;padding:10px;margin:10px 0;border-radius:6px;}\n'
+      + '  .b-box,.b-level{border:2px solid #f57c00;padding:10px;margin:10px 0;border-radius:6px;}\n'
+      + '  .a-box,.a-level{border:2px solid #d32f2f;padding:10px;margin:10px 0;border-radius:6px;}\n'
+      + '  .answer-key,.answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}\n'
+      + '  .student-space{height:60px;border-bottom:1px solid #aaa;margin:10px 0;}\n'
+      + '  .section{margin-bottom:20px;}\n'
+      + '</style></head><body>' + s + '</body></html>';
   }
   return s;
 }
