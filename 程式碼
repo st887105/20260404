@@ -208,7 +208,17 @@ function _callGemini(prompt, maxTokens, jsonMode) {
         try { result = JSON.parse(rawText); } catch(e) { lastError = model+'：JSON 解析失敗'; break; }
         if (!result.error) {
           if (model !== preferred) Logger.log('[降級] ' + preferred + ' → ' + model);
-          try { return result.candidates[0].content.parts[0].text; } catch(e) { lastError = model+'：candidates 解析失敗'; break; }
+          try {
+            // ★ v9.1 修正：Gemini 2.5 Flash 等 thinking 模型回傳多個 parts
+            // parts[0] 可能是思考過程（thoughtsToken），最後一個有文字的 part 才是實際回答
+            const parts = result.candidates[0].content.parts || [];
+            let text = '';
+            for (let pi = parts.length - 1; pi >= 0; pi--) {
+              if (parts[pi].text && parts[pi].text.trim()) { text = parts[pi].text; break; }
+            }
+            if (!text) text = (parts[0]||{}).text || '';
+            return text;
+          } catch(e) { lastError = model+'：candidates 解析失敗'; break; }
         }
         const code = Number(result.error.code||0);
         const msg  = String(result.error.message||'');
@@ -792,10 +802,31 @@ function analyzeClassWeakNodes(taskName) {
 function generateTeachingWorksheet(topNodes, grade, subject) {
   const cfg=getConfig(),isChinese=subject==='國語';
   let tpl=String(cfg[isChinese?'ChineseWorksheetPrompt':'MathWorksheetPrompt']||'');
-  if(!tpl) tpl='請為「{{GRADE}}」學生設計 A4 差異化學習單（HTML）。節點：\n{{NODES}}\n只輸出HTML。';
+  if(!tpl) tpl='請為「{{GRADE}}」學生設計 A4 差異化學習單（HTML）。節點：\n{{NODES}}\n只輸出完整HTML，不輸出任何說明文字或前後綴。';
   const nodeList=(topNodes||[]).slice(0,3).map((n,i)=>(i+1)+'. '+n).join('\n');
   const prompt=tpl.replace(/\{\{GRADE\}\}/g,grade||'').replace(/\{\{NODES\}\}/g,nodeList).replace(/\{\{PDF_CONTEXT\}\}/g,'');
-  return _callGemini(prompt,4096).replace(/```html/gi,'').replace(/```/g,'').trim();
+  const raw = _callGemini(prompt, 4096);
+  // ★ v9.1 強化：從 raw 中精確提取 HTML，過濾 thinking 模型殘留的思考文字
+  return _extractHtml(raw);
+}
+
+/**
+ * ★ v9.1 新增：從 Gemini 回傳文字中提取純 HTML
+ * Gemini 2.5 Flash 的 thinking 功能可能在 HTML 前後殘留思考文字
+ * 此函式確保只回傳 HTML 標籤內容
+ */
+function _extractHtml(raw) {
+  if (!raw) return '';
+  let text = String(raw).trim();
+  // 1. 移除 markdown code fence（```html ... ```）
+  text = text.replace(/^```html\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/g, '').trim();
+  // 2. 從第一個 HTML 標籤開始截取到最後一個標籤結束，去除前後雜訊文字
+  const firstTag = text.indexOf('<');
+  const lastTag  = text.lastIndexOf('>');
+  if (firstTag >= 0 && lastTag > firstTag) {
+    text = text.substring(firstTag, lastTag + 1).trim();
+  }
+  return text;
 }
 
 function getSimilarQuestions(node, grade, subject, limit) {
@@ -818,7 +849,7 @@ function getTaskQuestions(taskName) {
       (nodes.length===0||nodes.some(n=>String(r[1]||'').includes(n)||n.includes(String(r[1]||''))))&&r[2];
   }).map(r=>({id:String(r[0]||''),node:String(r[1]||''),text:String(r[2]||''),type:String(r[3]||'single'),
     options:_tryJSON(r[4],[]),answer:String(r[5]||''),difficulty:String(r[6]||''),
-    // ★ v9.1 修正：從 hint 欄解析 Level，確保 level 欄位不遺失
+    // ★ v9.1 修正：從 hint 欄中解析 level 欄位（格式為 [Level X] hint文字）
     level:(String(r[9]||'').match(/\[Level ([ABCD])\]/)||[])[1]||'D',
     hint:String(r[9]||'').replace(/^\[Level [ABCD]\]\s*/,'')}));
   return{questions,total:questions.length,grade:task.grade,subject:task.subject};
@@ -885,7 +916,6 @@ function cleanResultsSheet(){
 // 工具函式
 // ============================================================
 function _tryJSON(str,fallback){try{return JSON.parse(str);}catch(e){return fallback;}}
-
 // ============================================================
 // ★ v9.1 新增：差異化講義雲端儲存（存入 Google Drive）
 // ============================================================
@@ -894,17 +924,16 @@ function _tryJSON(str,fallback){try{return JSON.parse(str);}catch(e){return fall
  * 將 AI 生成的差異化講義 HTML 存入 Google Drive
  * 檔名格式：worksheet_{taskName}_{grade}_{subject}.html
  * 儲存位置：PdfFolderId 資料夾（若未設定則存根目錄）
- * @returns {object} { fileId, fileName, webViewLink }
  */
 function saveWorksheetToCloud(taskName, grade, subject, htmlContent) {
   if (!taskName || !htmlContent) throw new Error('請提供任務名稱與 HTML 內容');
   const safeName = String(taskName).replace(/[\/\\?%*:|"<>]/g, '_');
   const fileName = 'worksheet_' + safeName + '_' + (grade||'') + '_' + (subject||'') + '.html';
 
-  // 確保 HTML 有正確 UTF-8 charset（防止 Drive 預覽亂碼）
+  // 確保 HTML 有 UTF-8 charset
   let html = String(htmlContent);
-  if (!html.includes('charset')) {
-    html = html.replace('<head>', '<head><meta charset="UTF-8">');
+  if (!html.match(/charset/i)) {
+    html = html.includes('<head>') ? html.replace('<head>','<head><meta charset="UTF-8">') : html;
   }
   const blob = Utilities.newBlob(html, 'text/html', fileName);
 
@@ -913,27 +942,21 @@ function saveWorksheetToCloud(taskName, grade, subject, htmlContent) {
   try {
     const folderId = String(getConfig().PdfFolderId || '').trim();
     folder = (folderId && folderId.length > 5) ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
-  } catch(e) {
-    folder = DriveApp.getRootFolder();
-  }
+  } catch(e) { folder = DriveApp.getRootFolder(); }
 
-  // 若已存在同名檔案則覆寫（刪除舊檔）
+  // 若已存在同名檔案則覆寫
   const existing = folder.getFilesByName(fileName);
   while (existing.hasNext()) { existing.next().setTrashed(true); }
 
   const file = folder.createFile(blob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-  return {
-    fileId:      file.getId(),
-    fileName:    fileName,
-    webViewLink: file.getUrl()
-  };
+  return { fileId: file.getId(), fileName, webViewLink: file.getUrl() };
 }
 
 /**
  * 從 Google Drive 讀取已儲存的差異化講義 HTML
- * @returns {object|null} { htmlContent, fileId, fileName } 或 null（若不存在）
+ * @returns {object|null} { htmlContent, fileId, fileName } 或 null
  */
 function getWorksheetFromCloud(taskName, grade, subject) {
   if (!taskName) return null;
@@ -944,9 +967,7 @@ function getWorksheetFromCloud(taskName, grade, subject) {
   try {
     const folderId = String(getConfig().PdfFolderId || '').trim();
     folder = (folderId && folderId.length > 5) ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
-  } catch(e) {
-    folder = DriveApp.getRootFolder();
-  }
+  } catch(e) { folder = DriveApp.getRootFolder(); }
 
   const files = folder.getFilesByName(fileName);
   if (!files.hasNext()) return null;
