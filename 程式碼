@@ -78,6 +78,9 @@ function doPost(e) {
       // ★ v9.0 新增：操作說明網址
       case 'getHelpUrl':                    result = getHelpUrl(); break;
       case 'updateHelpUrl':                 result = updateHelpUrl(data.url, data.pwd); break;
+      // ★ v9.1 新增：差異化講義雲端儲存
+      case 'saveWorksheetToCloud':          result = saveWorksheetToCloud(data.taskName,data.grade,data.subject,data.htmlContent); break;
+      case 'getWorksheetFromCloud':         result = getWorksheetFromCloud(data.taskName,data.grade,data.subject); break;
       default: throw new Error('未知的 API 請求：' + action);
     }
     return ContentService
@@ -814,7 +817,10 @@ function getTaskQuestions(taskName) {
     return(!task.subject||String(r[8]||'')===task.subject)&&(!task.grade||String(r[7]||'')===task.grade)&&
       (nodes.length===0||nodes.some(n=>String(r[1]||'').includes(n)||n.includes(String(r[1]||''))))&&r[2];
   }).map(r=>({id:String(r[0]||''),node:String(r[1]||''),text:String(r[2]||''),type:String(r[3]||'single'),
-    options:_tryJSON(r[4],[]),answer:String(r[5]||''),difficulty:String(r[6]||''),hint:String(r[9]||'').replace(/^\[Level [ABCD]\]\s*/,'')}));
+    options:_tryJSON(r[4],[]),answer:String(r[5]||''),difficulty:String(r[6]||''),
+    // ★ v9.1 修正：從 hint 欄解析 Level，確保 level 欄位不遺失
+    level:(String(r[9]||'').match(/\[Level ([ABCD])\]/)||[])[1]||'D',
+    hint:String(r[9]||'').replace(/^\[Level [ABCD]\]\s*/,'')}));
   return{questions,total:questions.length,grade:task.grade,subject:task.subject};
 }
 
@@ -879,3 +885,78 @@ function cleanResultsSheet(){
 // 工具函式
 // ============================================================
 function _tryJSON(str,fallback){try{return JSON.parse(str);}catch(e){return fallback;}}
+
+// ============================================================
+// ★ v9.1 新增：差異化講義雲端儲存（存入 Google Drive）
+// ============================================================
+
+/**
+ * 將 AI 生成的差異化講義 HTML 存入 Google Drive
+ * 檔名格式：worksheet_{taskName}_{grade}_{subject}.html
+ * 儲存位置：PdfFolderId 資料夾（若未設定則存根目錄）
+ * @returns {object} { fileId, fileName, webViewLink }
+ */
+function saveWorksheetToCloud(taskName, grade, subject, htmlContent) {
+  if (!taskName || !htmlContent) throw new Error('請提供任務名稱與 HTML 內容');
+  const safeName = String(taskName).replace(/[\/\\?%*:|"<>]/g, '_');
+  const fileName = 'worksheet_' + safeName + '_' + (grade||'') + '_' + (subject||'') + '.html';
+
+  // 確保 HTML 有正確 UTF-8 charset（防止 Drive 預覽亂碼）
+  let html = String(htmlContent);
+  if (!html.includes('charset')) {
+    html = html.replace('<head>', '<head><meta charset="UTF-8">');
+  }
+  const blob = Utilities.newBlob(html, 'text/html', fileName);
+
+  // 取得儲存資料夾
+  let folder;
+  try {
+    const folderId = String(getConfig().PdfFolderId || '').trim();
+    folder = (folderId && folderId.length > 5) ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
+  } catch(e) {
+    folder = DriveApp.getRootFolder();
+  }
+
+  // 若已存在同名檔案則覆寫（刪除舊檔）
+  const existing = folder.getFilesByName(fileName);
+  while (existing.hasNext()) { existing.next().setTrashed(true); }
+
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return {
+    fileId:      file.getId(),
+    fileName:    fileName,
+    webViewLink: file.getUrl()
+  };
+}
+
+/**
+ * 從 Google Drive 讀取已儲存的差異化講義 HTML
+ * @returns {object|null} { htmlContent, fileId, fileName } 或 null（若不存在）
+ */
+function getWorksheetFromCloud(taskName, grade, subject) {
+  if (!taskName) return null;
+  const safeName = String(taskName).replace(/[\/\\?%*:|"<>]/g, '_');
+  const fileName = 'worksheet_' + safeName + '_' + (grade||'') + '_' + (subject||'') + '.html';
+
+  let folder;
+  try {
+    const folderId = String(getConfig().PdfFolderId || '').trim();
+    folder = (folderId && folderId.length > 5) ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
+  } catch(e) {
+    folder = DriveApp.getRootFolder();
+  }
+
+  const files = folder.getFilesByName(fileName);
+  if (!files.hasNext()) return null;
+
+  const file = files.next();
+  try {
+    const htmlContent = file.getBlob().getDataAsString('UTF-8');
+    return { htmlContent, fileId: file.getId(), fileName, webViewLink: file.getUrl() };
+  } catch(e) {
+    Logger.log('[getWorksheetFromCloud] 讀取失敗：' + e.message);
+    return null;
+  }
+}
