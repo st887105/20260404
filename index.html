@@ -1062,34 +1062,15 @@ async function genWorksheet(){
   const tick=setInterval(()=>{progBar.style.width=Math.min(90,10+Math.round((Date.now()-_waitStart)/1000)*1.5)+'%';},2000);
 
   try{
-    // 後端回傳的其實是 JSON Object 陣列，我們要在這裡自己組裝成 HTML
-    const jsonArray = await API.generateTeachingWorksheet(topNodes,grade,subject);
+    // ★ 修正：後端 generateTeachingWorksheet 回傳的是 HTML 字串，不是 JSON 陣列
+    // 舊版（v9.1 錯誤）把回傳值當 JSON Array 呼叫 .forEach() → "jsonArray.forEach is not a function"
+    // 正確做法：直接當 HTML 字串使用（與 v9.0 一致）
+    const htmlContent = await API.generateTeachingWorksheet(topNodes,grade,subject);
     clearInterval(rot);clearInterval(tick);
     progBar.style.width='100%';progMsg.textContent='✅ 學習單生成完成！';
 
-    let html = `<div class="p-4 bg-white" style="font-family:'Noto Sans TC',sans-serif;">`;
-    const grouped = {};
-    jsonArray.forEach(q => { if(!grouped[q.node]) grouped[q.node] = []; grouped[q.node].push(q); });
-    
-    Object.entries(grouped).forEach(([node, qs], gi) => {
-      html += `<div class="mb-4"><h4 style="color:#1565c0; background:#e3f2fd; padding:10px; border-radius:6px; font-weight:bold;">節點 ${gi+1}：${esc(node)}</h4>`;
-      qs.forEach((q, qi) => {
-        html += `<div class="mb-4 ps-2 ws-question">
-          <p style="font-size:1.1rem;"><strong>${qi+1}.</strong> ${esc(q.text).replace(/\n/g, '<br>')}</p>
-          <p class="small text-info mb-1" style="font-size:0.95rem;">💡 <strong>引導：</strong>${esc(q.step)}</p>
-          <p class="small text-warning mb-1" style="font-size:0.95rem;">🔑 <strong>提示：</strong>${esc(q.hint)}</p>
-          
-          <div class="answer-section mt-2 pt-2" style="border-top:1px dashed #e0e0e0; background:#f9f9f9; padding:10px; border-left:4px solid #4caf50;">
-            <p class="text-success fw-bold mb-0">✅ 解答：${esc(q.answer)}</p>
-          </div>
-          <div class="student-space" style="height:80px; border-bottom:1px solid #757575; margin-top:15px;"></div>
-        </div>`;
-      });
-      html += `</div>`;
-    });
-    html += `</div>`;
-    
-    app.wsHtml = _sanitizeWsHtml(html);
+    // 清理並補全 HTML（移除 markdown fence、補齊 html/head/body 結構）
+    app.wsHtml = _sanitizeWsHtml(htmlContent);
 
     document.getElementById('ws-state-done').style.display='';
     document.getElementById('ws-toggle-btn').innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
@@ -1104,13 +1085,18 @@ async function genWorksheet(){
   }
 }
 
-function _sanitizeWsHtml(html){
+function _sanitizeWsHtml(raw){
+  // ★ 先移除 AI 可能夾帶的 markdown code fence（```html ... ```）
+  let html=String(raw||'').replace(/^```html\s*/i,'').replace(/```\s*$/,'').trim();
+  // 補齊完整 HTML 結構（若 AI 只回傳 body 內容）
   if(!html.includes('<html')){
     html=`<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <style>
-      body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;line-height:1.8;}
-      h1,h2,h3,h4{color:#1e88e5;margin-bottom:15px;}
+      body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}
+      h1,h2,h3{color:#1e88e5;}table{border-collapse:collapse;width:100%;}
+      td,th{border:1px solid #ccc;padding:6px 10px;}
+      .answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
     </style></head><body>${html}</body></html>`;
   }
   return html;
