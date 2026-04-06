@@ -1,0 +1,756 @@
+// ============================================================
+// 車城國小學力檢測AI補救系統 - Google Apps Script 後端 v8.9
+// 修正整合記錄：
+//   v8.6  gemini-2.0-flash-lite 取代已停用的 gemini-1.5-flash
+//   v8.7  多模型自動降級、deadline:30 防止無限等待
+//   v8.8  gemini-2.5-flash 優先、BATCH_SIZE=5 減少 80% API 呼叫
+//         responseMimeType=application/json 強制 JSON 輸出
+//   v8.9  新增 fixGeminiModel()、testGeminiAPI() 診斷函式
+//         新增 getPracticeQuestionsForErrors 類似題生成
+//         _isValid 過濾純數字、getStudents 欄位修正
+//   v8.9p getStudents 補丁：支援「X年X班X號 姓名」混合欄格式自動拆分
+//   v8.9q ★ 關鍵修正：getStudents / uploadTaskData 使用 String() 比較
+//          修正 Google Sheets 將數字型任務名稱（如"101"）自動轉為 number
+//          導致嚴格比較 === 永遠失敗、學生名單無法讀取的問題
+// ============================================================
+
+// ★ 立即修復：在 GAS 編輯器直接執行此函式，不需重新部署 ★
+function fixGeminiModel() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = ss.getSheetByName('Config');
+  if (!cfg) { Logger.log('找不到 Config，請先執行 setupDatabase()'); return; }
+  const rows = cfg.getDataRange().getValues();
+  let modelFixed = false, paidFixed = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === 'GeminiModel') {
+      const old = rows[i][1];
+      cfg.getRange(i+1, 2).setValue('gemini-2.5-flash');
+      Logger.log('✅ GeminiModel: ' + old + ' → gemini-2.5-flash');
+      modelFixed = true;
+    }
+    if (String(rows[i][0]) === 'IsPaidAccount' && (!rows[i][1] || rows[i][1] === '')) {
+      cfg.getRange(i+1, 2).setValue('false');
+      paidFixed = true;
+    }
+  }
+  if (!modelFixed) { cfg.appendRow(['GeminiModel', 'gemini-2.5-flash']); Logger.log('✅ 新增 GeminiModel'); }
+  if (!paidFixed)  { cfg.appendRow(['IsPaidAccount', 'false']); }
+  try { CacheService.getScriptCache().remove('BankData_V3'); } catch(e) {}
+  SpreadsheetApp.getUi().alert('✅ 修復完成！\nGeminiModel 已改為 gemini-2.5-flash\n請回到網站「題庫管理」點「重新出題」。');
+}
+
+function doPost(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) throw new Error('未接收到有效的請求內容');
+    const params = JSON.parse(e.postData.contents);
+    const action = params.action;
+    const data   = params.data || {};
+    let result   = null;
+    switch (action) {
+      case 'getTasks':                      result = getTasks(); break;
+      case 'getStudents':                   result = getStudents(data.taskName); break;
+      case 'verifyAdmin':                   result = verifyAdmin(data.pwd); break;
+      case 'getQuizSettings':               result = getQuizSettings(); break;
+      case 'updateQuizSettings':            result = updateQuizSettings(data.count); break;
+      case 'updateFolderId':                result = updateFolderId(data.folderId); break;
+      case 'getFolderId':                   result = getFolderId(); break;
+      case 'getSystemPrompts':              result = getSystemPrompts(); break;
+      case 'updateSystemPrompts':           result = updateSystemPrompts(data.mathPrompt,data.chinesePrompt,data.mathWorksheetPrompt,data.chineseWorksheetPrompt,data.pwd); break;
+      case 'setupDatabase':                 result = setupDatabase(); break;
+      case 'clearBankCache':                result = clearBankCache(); break;
+      case 'clearNodesFromBank':            result = clearNodesFromBank(data.nodesArray,data.grade,data.subject); break;
+      case 'uploadTaskData':                result = uploadTaskData(data.taskName,data.grade,data.subject,data.studentData,data.uniqueNodes); break;
+      case 'generateBatch':                 result = generateBatch(data.nodesArray,data.grade,data.subject,data.batchIndex); break;
+      case 'generateBatchFromFolder':       result = generateBatchFromFolder(data.folderId,data.nodesArray,data.grade,data.subject,data.batchIndex,data.mode); break;
+      case 'regenerateBatchForTask':        result = regenerateBatchForTask(data.taskName,data.batchIndex,data.mode,data.folderId); break;
+      case 'scanFolder':                    result = scanFolder(data.folderId); break;
+      case 'generateQuiz':                  result = generateQuiz(data.weakNode,data.taskName); break;
+      case 'submitQuizResult':              result = submitQuizResult(data.payload); break;
+      case 'getTaskResults':                result = getTaskResults(data.taskName); break;
+      case 'getQuestionErrorRates':         result = getQuestionErrorRates(data.taskName); break;
+      case 'analyzeClassWeakNodes':         result = analyzeClassWeakNodes(data.taskName); break;
+      case 'generateTeachingWorksheet':     result = generateTeachingWorksheet(data.topNodes,data.grade,data.subject); break;
+      case 'getSimilarQuestions':           result = getSimilarQuestions(data.node,data.grade,data.subject,data.limit); break;
+      case 'getTaskQuestions':              result = getTaskQuestions(data.taskName); break;
+      case 'getPracticeQuestionsForErrors': result = getPracticeQuestionsForErrors(data.taskName); break;
+      case 'getGeminiSettings':             result = getGeminiSettings(); break;
+      case 'updateGeminiSettings':          result = updateGeminiSettings(data.model,data.isPaid,data.pwd); break;
+      default: throw new Error('未知的 API 請求：' + action);
+    }
+    return ContentService
+      .createTextOutput(JSON.stringify({status:'success',data:result}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    Logger.log('[API Error] ' + err.message);
+    return ContentService
+      .createTextOutput(JSON.stringify({status:'error',message:err.message||String(err)}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  // ★ 支援 GET + ?payload= 呼叫（前端 CORS 修正用）
+  if (e&&e.parameter&&e.parameter.payload) {
+    return doPost({postData:{contents:e.parameter.payload}});
+  }
+  return ContentService.createTextOutput('✅ 車城國小 AI 補救系統 API v8.9q 運作中');
+}
+
+// ============================================================
+// ★ 診斷測試函式（在 GAS 編輯器直接執行）
+// ============================================================
+function testGeminiAPI() {
+  const cfg    = getConfig();
+  const apiKey = String(cfg.GeminiAPIKey || '').trim();
+  const model  = String(cfg.GeminiModel  || 'gemini-2.5-flash').trim();
+  if (!apiKey || apiKey.includes('請在此')) {
+    SpreadsheetApp.getUi().alert('❌ 尚未設定 GeminiAPIKey！\n請在 Config 分頁填入 API 金鑰。');
+    return;
+  }
+  const MODELS_TO_TRY = [model, 'gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  const unique = [];
+  MODELS_TO_TRY.forEach(m => { if (!unique.includes(m)) unique.push(m); });
+  let report = '=== Gemini API 診斷報告 ===\n';
+  let firstWorkingModel = null;
+  for (let i = 0; i < unique.length; i++) {
+    const m = unique[i];
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + m + ':generateContent?key=' + apiKey;
+    try {
+      const resp = UrlFetchApp.fetch(url, {
+        method:'post', contentType:'application/json',
+        payload:JSON.stringify({contents:[{parts:[{text:'請回答「OK」'}]}],generationConfig:{maxOutputTokens:10}}),
+        muteHttpExceptions:true, deadline:20
+      });
+      const data = JSON.parse(resp.getContentText());
+      if (!data.error) {
+        report += '✅ ' + m + '：正常可用\n';
+        if (!firstWorkingModel) firstWorkingModel = m;
+      } else {
+        report += '❌ ' + m + '：' + data.error.code + ' ' + String(data.error.message||'').substring(0,60) + '\n';
+      }
+    } catch(e) {
+      report += '❌ ' + m + '：連線錯誤 - ' + String(e.message||e).substring(0,50) + '\n';
+    }
+    if (i < unique.length - 1) Utilities.sleep(4000);
+  }
+  if (firstWorkingModel) {
+    const cfgSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+    const rows = cfgSheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === 'GeminiModel') {
+        cfgSheet.getRange(i+1,2).setValue(firstWorkingModel);
+        report += '\n→ 已自動更新 Config.GeminiModel = ' + firstWorkingModel;
+        break;
+      }
+    }
+  }
+  Logger.log(report);
+  SpreadsheetApp.getUi().alert(
+    report + '\n\n' +
+    (firstWorkingModel ? '✅ 可用！請回到網站點「重新出題」。'
+     : '⚠️ 所有模型都不可用。\n如果看到 429，請等 60 秒後再試。\n如果看到 403，請確認 API 金鑰有效。')
+  );
+}
+
+// ============================================================
+// Gemini API 呼叫（多模型降級版）
+// ============================================================
+function _callGemini(prompt, maxTokens, jsonMode) {
+  const cfg    = getConfig();
+  const apiKey = String(cfg.GeminiAPIKey || '').trim();
+  const preferred = String(cfg.GeminiModel || 'gemini-2.5-flash').trim();
+  if (!apiKey || apiKey.includes('請在此')) throw new Error('請先在 Config 試算表設定 GeminiAPIKey！');
+
+  const FALLBACK_MODELS = ['gemini-2.5-flash','gemini-2.0-flash-lite','gemini-2.0-flash','gemini-1.5-flash'];
+  const modelsToTry = [preferred, ...FALLBACK_MODELS.filter(m => m !== preferred)];
+  const genConfig = { temperature:0.65, maxOutputTokens:maxTokens||2048 };
+  if (jsonMode) genConfig.responseMimeType = 'application/json';
+  const body = JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:genConfig });
+
+  let lastError = '尚未嘗試任何模型';
+  for (const model of modelsToTry) {
+    const endpoints = [
+      'https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+apiKey,
+      'https://generativelanguage.googleapis.com/v1/models/'+model+':generateContent?key='+apiKey
+    ];
+    for (const url of endpoints) {
+      for (let retry = 0; retry < 2; retry++) {
+        let resp, result;
+        try {
+          resp = UrlFetchApp.fetch(url, {method:'post',contentType:'application/json',payload:body,muteHttpExceptions:true,deadline:30});
+        } catch(networkErr) {
+          lastError = '網路錯誤：'+String(networkErr.message||networkErr).substring(0,60);
+          if (retry < 1) Utilities.sleep(2000);
+          continue;
+        }
+        let rawText = '';
+        try { rawText = resp.getContentText(); } catch(e) { rawText = ''; }
+        if (!rawText || rawText.trim().startsWith('<')) { lastError = model+'：回傳非 JSON'; break; }
+        try { result = JSON.parse(rawText); } catch(e) { lastError = model+'：JSON 解析失敗'; break; }
+        if (!result.error) {
+          if (model !== preferred) Logger.log('[降級] ' + preferred + ' → ' + model);
+          try { return result.candidates[0].content.parts[0].text; } catch(e) { lastError = model+'：candidates 解析失敗'; break; }
+        }
+        const code = Number(result.error.code||0);
+        const msg  = String(result.error.message||'');
+        lastError  = model+' '+code+' '+msg.substring(0,80);
+        Logger.log('[ERR] ' + lastError);
+        if (code===429||msg.includes('quota')||msg.includes('RESOURCE_EXHAUSTED')) {
+          Utilities.sleep((retry===0?20:50)*1000); continue;
+        }
+        if (code===404||msg.includes('not found')||msg.includes('not supported')) break;
+        if (code===403||msg.includes('API key')) throw new Error('API 金鑰無效（403）。請至 https://aistudio.google.com 確認。');
+        throw new Error('Gemini '+code+'：'+msg.substring(0,120));
+      }
+    }
+  }
+  throw new Error('所有 Gemini 模型均無法使用。最後錯誤：'+lastError+'\n如見 429：等 60 秒後到「題庫管理」點「重新出題」繼續。\n如見 404：到 GAS 執行 testGeminiAPI() 確認。');
+}
+
+// ============================================================
+// 1. 資料庫初始化
+// ============================================================
+function setupDatabase() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const log = [];
+  let cfg = ss.getSheetByName('Config');
+  if (!cfg) {
+    cfg = ss.insertSheet('Config');
+    cfg.appendRow(['Key','Value']);
+    cfg.appendRow(['AdminPassword','1234']);
+    cfg.appendRow(['GeminiAPIKey','請在此貼上您的 Gemini API 金鑰']);
+    cfg.appendRow(['QuizCount','10']);
+    cfg.appendRow(['PdfFolderId','']);
+    log.push('✅ Config 分頁已建立');
+  }
+  const rows      = cfg.getDataRange().getValues();
+  const existKeys = rows.map(r => String(r[0]));
+  const add = (key, val, msg) => { if (!existKeys.includes(key)) { cfg.appendRow([key,val]); log.push('✅ 補充 '+msg); } };
+  add('GeminiModel','gemini-2.5-flash','GeminiModel');
+  add('IsPaidAccount','false','IsPaidAccount');
+  add('MathPrompt',[
+    '【角色設定】','你是台灣頂尖的國小數學科教學與評量專家，深諳 108 課綱素養導向教學與布魯姆認知層次分析。','',
+    '【任務背景】','請針對「{{GRADE}}」學生，依據其因材網測驗錯誤率，為以下每個知識節點各出 {{QCOUNT}} 題測驗題：',
+    '【知識節點清單】：','{{NODES}}','{{PDF_CONTEXT}}','',
+    '【出題架構】：','- Level D（基礎題）：最底層運算，數字簡單，直接計算',
+    '- Level C（拆解題）：步驟分解，先求中間值再求最終解',
+    '- Level B（變數題）：情境與數字變換，測試演算法掌握度',
+    '- Level A（應用題）：結合生活情境，多步驟推理','',
+    '【格式規定（違反任何一條視為失敗）】：',
+    '1. 只輸出 JSON 陣列，開頭必須是 [ 結尾必須是 ]，前後不得有任何文字',
+    '2. 不得輸出 Markdown 符號（包含 ```、**、##）',
+    '3. 題目文字（text 欄位）中的算式用中文描述，不要使用 LaTeX 的 $ 符號',
+    '4. options 必須是 4 個完整答案字串的陣列，例如 ["40","50","45","30"]',
+    '5. answer 欄位只填單一大寫字母：A 或 B 或 C 或 D',
+    '6. hint 欄位寫解題步驟說明','',
+    '正確 JSON 格式範例：',
+    '[{"node":"整數的概數與估算","level":"D","text":"43 四捨五入到十位，結果是多少？","type":"single","options":["40","50","45","30"],"answer":"A","difficulty":"easy","hint":"四捨五入到十位，看個位數字：3 小於 5，所以十位不進位，答案是 40。"}]'
+  ].join('\n'),'數學出題 Prompt');
+  add('ChinesePrompt',[
+    '【角色設定】','你是台灣首屈一指的國小國語文閱讀與評量專家，深度掌握 108 課綱語文素養與 PIRLS/PISA 閱讀歷程分析。','',
+    '【任務背景】','請針對「{{GRADE}}」學生，為以下每個知識節點各出 {{QCOUNT}} 題層次化閱讀測驗：',
+    '【知識節點清單】：','{{NODES}}','{{PDF_CONTEXT}}','',
+    '【出題架構】：','請先創作一篇 200 到 300 字、符合該年級生活經驗的短文作為閱讀材料。',
+    '- Level C（基礎事實）：文本中可直接找到答案的事實、字音字形、字詞釋義',
+    '- Level B（類比轉移）：修辭、句型、成語或邏輯結構的類比應用',
+    '- Level A（深度推論）：作者意圖、弦外之音或情節預測','',
+    '【格式規定（違反任何一條視為失敗）】：',
+    '1. 只輸出 JSON 陣列，開頭必須是 [ 結尾必須是 ]，前後不得有任何文字',
+    '2. 不得輸出 Markdown 符號（包含 ```、**、##）',
+    '3. text 欄位格式固定為：「【閱讀短文】\\n短文內容\\n\\n【題目】\\n題目文字」',
+    '4. options 必須是 4 個完整答案字串的陣列',
+    '5. answer 欄位只填單一大寫字母：A 或 B 或 C 或 D',
+    '6. hint 欄位寫出答案依據在短文的哪裡，以及解題思路','',
+    '正確 JSON 格式範例：',
+    '[{"node":"字詞釋義","level":"C","text":"【閱讀短文】\\n小明每天早上都會幫媽媽澆花。\\n\\n【題目】\\n文章中「盛開」的意思最接近下列哪個詞語？","type":"single","options":["完全凋謝","開得茂盛","剛剛發芽","慢慢枯萎"],"answer":"B","difficulty":"easy","hint":"「盛」有旺盛、茂盛的意思，「盛開」就是花開得很茂盛。"}]'
+  ].join('\n'),'國語出題 Prompt');
+  add('MathWorksheetPrompt',[
+    '你是台灣國小數學科教師，請為「{{GRADE}}」學生設計一份可直接列印的 A4 差異化補救學習單。',
+    '【重點弱點節點】：\n{{NODES}}',
+    '包含：學習目標 / 概念複習 / 分層練習（D×3 C×3 B×3 A×1）/ 解答 / 自我檢核表。',
+    '輸出完整 HTML，A4 版面（max-width:210mm），不輸出 Markdown。'
+  ].join('\n'),'數學學習單 Prompt');
+  add('ChineseWorksheetPrompt',[
+    '你是台灣國小國語文教師，請為「{{GRADE}}」學生設計一份可直接列印的 A4 差異化補救學習單。',
+    '【重點弱點節點】：\n{{NODES}}',
+    '包含：學習目標 / 閱讀短文（200字）/ 分層測驗（C×5 B×4 A×1）/ 解答 / 自我檢核表。',
+    '輸出完整 HTML，A4 版面（max-width:210mm），不輸出 Markdown。'
+  ].join('\n'),'國語學習單 Prompt');
+  const sheetDefs = {
+    Bank:    ['ID','知識節點','題目','類型','選項(JSON)','正解','難度','適用年級','科目','解析'],
+    Tasks:   ['任務名稱','適用年級','科目','建立時間','學生人數','弱點節點(JSON)'],
+    Students:['任務名稱','座號','姓名','弱點節點(JSON)'],
+    History: ['上傳時間','任務名稱','適用年級','科目','學生人數','班級弱點節點'],
+    Results: ['測驗時間','任務名稱','座號','姓名','分數','作答歷時(秒)','作答明細(JSON)']
+  };
+  Object.entries(sheetDefs).forEach(([name,header]) => {
+    if (!ss.getSheetByName(name)) { ss.insertSheet(name).appendRow(header); log.push('✅ '+name+' 已建立'); }
+  });
+  try { CacheService.getScriptCache().remove('BankData_V3'); } catch(e) {}
+  return '✅ 資料庫初始化完成！\n'+log.join('\n');
+}
+
+// ============================================================
+// 2. 認證與設定
+// ============================================================
+function verifyAdmin(pwd) {
+  const cfg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if (!cfg) return false;
+  return cfg.getDataRange().getValues().slice(1).some(r => String(r[0])==='AdminPassword' && String(r[1])===String(pwd));
+}
+
+function getConfig() {
+  const cfg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if (!cfg) return {};
+  const out = {};
+  cfg.getDataRange().getValues().forEach(r => { if(r[0]) out[String(r[0])]=r[1]; });
+  return out;
+}
+
+function _updateConfigValue(sheet, key, value) {
+  const rows = sheet.getDataRange().getValues();
+  for (let i=1;i<rows.length;i++) { if(String(rows[i][0])===String(key)){ sheet.getRange(i+1,2).setValue(value); return; } }
+  sheet.appendRow([key,value]);
+}
+
+function getQuizSettings()     { return { quizCount:parseInt(getConfig().QuizCount,10)||10 }; }
+function updateQuizSettings(n) { const v=parseInt(n,10); if(isNaN(v)||v<1) throw new Error('請輸入有效數字'); _updateConfigValue(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),'QuizCount',v); return '✅ 題數已更新為'+v+'題'; }
+function updateFolderId(id)    { const s=String(id||'').split('?')[0].trim(); _updateConfigValue(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),'PdfFolderId',s); return '✅ 資料夾 ID 已儲存'; }
+function getFolderId()         { const id=String(getConfig().PdfFolderId||'').split('?')[0].trim(); return (id&&!id.startsWith('（')&&id.length>5)?id:''; }
+function getSystemPrompts()    { const c=getConfig(); return {mathPrompt:String(c.MathPrompt||''),chinesePrompt:String(c.ChinesePrompt||''),mathWorksheetPrompt:String(c.MathWorksheetPrompt||''),chineseWorksheetPrompt:String(c.ChineseWorksheetPrompt||'')}; }
+function updateSystemPrompts(mathP,chineseP,mathWS,chineseWS,pwd) {
+  if (!verifyAdmin(pwd)) throw new Error('密碼錯誤！');
+  const c=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if(mathP!==undefined)    _updateConfigValue(c,'MathPrompt',mathP||'');
+  if(chineseP!==undefined) _updateConfigValue(c,'ChinesePrompt',chineseP||'');
+  if(mathWS!==undefined)   _updateConfigValue(c,'MathWorksheetPrompt',mathWS||'');
+  if(chineseWS!==undefined)_updateConfigValue(c,'ChineseWorksheetPrompt',chineseWS||'');
+  return '✅ 提示詞已更新！';
+}
+function getGeminiSettings()   { const c=getConfig(); return {model:String(c.GeminiModel||'gemini-2.5-flash'),isPaid:String(c.IsPaidAccount||'false').toLowerCase()==='true'}; }
+function updateGeminiSettings(model,isPaid,pwd) {
+  if (!verifyAdmin(pwd)) throw new Error('密碼錯誤！');
+  const c=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if(model!==undefined) _updateConfigValue(c,'GeminiModel',String(model||'gemini-2.5-flash').trim());
+  if(isPaid!==undefined)_updateConfigValue(c,'IsPaidAccount',isPaid?'true':'false');
+  return '✅ Gemini 設定已更新！';
+}
+
+// ============================================================
+// 3. 任務與學生管理
+// ============================================================
+function uploadTaskData(taskName, grade, subject, studentData, uniqueNodes) {
+  if (!taskName||!grade||!subject) throw new Error('任務名稱、年級、科目為必填');
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const stdData = (studentData||[]).filter(s => s && String(s.number||'').trim());
+  const uNodes  = (uniqueNodes||[]).filter(_isValid);
+
+  const tasksSheet = ss.getSheetByName('Tasks');
+  if (!tasksSheet) throw new Error('請先執行「初始化資料庫」');
+  const taskRows = tasksSheet.getDataRange().getValues();
+  let taskRowIdx = -1;
+  // ★ FIXED v8.9q: String() 轉換比較，避免 Sheets 將數字型名稱存為 number
+  for (let i=1;i<taskRows.length;i++) {
+    if (String(taskRows[i][0]) === String(taskName)) { taskRowIdx=i+1; break; }
+  }
+  const taskRow = [taskName,grade,subject,new Date().toLocaleString('zh-TW'),stdData.length,JSON.stringify(uNodes)];
+  if (taskRowIdx>0) tasksSheet.getRange(taskRowIdx,1,1,6).setValues([taskRow]);
+  else              tasksSheet.appendRow(taskRow);
+
+  const studSheet = ss.getSheetByName('Students');
+  if (studSheet) {
+    if (studSheet.getLastRow()>1) {
+      const sRows = studSheet.getDataRange().getValues();
+      // ★ FIXED v8.9q: String() 比較
+      for (let i=sRows.length-1;i>=1;i--) {
+        if (String(sRows[i][0])===String(taskName)) studSheet.deleteRow(i+1);
+      }
+    }
+    if (stdData.length>0) {
+      studSheet.getRange(studSheet.getLastRow()+1,1,stdData.length,4)
+        .setValues(stdData.map(s=>[
+          taskName,
+          String(s.number||'').trim(),   // B欄：座號
+          String(s.name  ||'').trim(),   // C欄：姓名
+          JSON.stringify((s.weakNodes||[]).filter(_isValid))
+        ]));
+    }
+  }
+
+  const hist = ss.getSheetByName('History');
+  if (hist) hist.appendRow([new Date().toLocaleString('zh-TW'),taskName,grade,subject,stdData.length,JSON.stringify(uNodes)]);
+
+  _createTaskSheet(ss,taskName,grade,subject,stdData,uNodes);
+  return {taskName,studentCount:stdData.length,nodes:uNodes};
+}
+
+function _createTaskSheet(ss, taskName, grade, subject, studentData, uniqueNodes) {
+  try {
+    const name    = taskName.substring(0,40);
+    const existing= ss.getSheetByName(name);
+    if (existing) ss.deleteSheet(existing);
+    const sheet   = ss.insertSheet(name);
+    SpreadsheetApp.flush();
+    const stdData = studentData||[];
+    const uNodes  = uniqueNodes||[];
+    const rows = [];
+    rows.push(['任務資訊','年級：'+grade,'科目：'+subject,'建立時間：'+new Date().toLocaleString('zh-TW')]);
+    rows.push(['','','','']);
+    rows.push(['座號','姓名','弱點節點','weakNodes(JSON)']);
+    stdData.forEach(s=>rows.push([String(s.number||'').trim(),String(s.name||'').trim(),(s.weakNodes||[]).join('、'),JSON.stringify(s.weakNodes||[])]));
+    sheet.getRange(1,1,rows.length,4).setValues(rows);
+    const sumRow = rows.length+2;
+    sheet.getRange(sumRow,1,1,2).setValues([['班級弱點節點匯總',uNodes.join('、')]]);
+    sheet.getRange(1,1,1,4).setBackground('#1e88e5').setFontColor('#fff').setFontWeight('bold');
+    sheet.getRange(3,1,1,4).setBackground('#e3f2fd').setFontWeight('bold');
+    [120,80,400,200].forEach((w,i)=>sheet.setColumnWidth(i+1,w));
+  } catch(e) { Logger.log('[TaskSheet 錯誤] '+e.message); }
+}
+
+function getTasks() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Tasks');
+  if (!sheet||sheet.getLastRow()<2) return [];
+  return sheet.getDataRange().getValues().slice(1).filter(r=>r[0]).map(r=>({
+    taskName:String(r[0]),grade:String(r[1]),subject:String(r[2]),
+    createdAt:String(r[3]),studentCount:Number(r[4]),weakNodes:_tryJSON(r[5],[])
+  }));
+}
+
+/**
+ * 取得指定任務的學生清單
+ * ★ FIXED v8.9q: String(r[0]) === String(taskName)
+ *   避免 Google Sheets 將數字型任務名稱（如"101"）自動轉為 number 101
+ *   導致嚴格比較 === 永遠失敗，造成「此任務無學生資料」的問題。
+ *
+ * ★ FIXED v8.9p: 支援「4年 1班 3號 陳勝文 2」混合格式自動拆分
+ */
+function getStudents(taskName) {
+  if (!taskName) throw new Error('請提供任務名稱');
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Students');
+  if (!sheet||sheet.getLastRow()<2) return [];
+
+  return sheet.getDataRange().getValues().slice(1)
+    // ★ 關鍵修正：用 String() 轉換後再比較，避免 number vs string 型別不符
+    .filter(r => String(r[0]) === String(taskName) && String(r[1]||'').trim())
+    .map(r => {
+      let number = String(r[1]).trim();
+      let name   = String(r[2]||'').trim();
+
+      // 若 name 欄空白，嘗試從 number 欄提取中文姓名
+      // 例：「4年 1班 3號 陳勝文 2」→ name="陳勝文", number="4年 1班 3號"
+      if (!name || name==='null' || name==='undefined') {
+        const m = number.match(/號\s*([\u4e00-\u9fa5]{2,4})(?:\s+\d+)?$/);
+        if (m) {
+          name   = m[1];
+          number = number.replace(/\s+[\u4e00-\u9fa5]{2,4}(?:\s+\d+)?$/,'').trim();
+        }
+      }
+
+      return {
+        taskName:  String(r[0]),
+        number:    number,
+        name:      name,
+        weakNodes: _tryJSON(r[3],[]).filter(_isValid)
+      };
+    });
+}
+
+// ============================================================
+// 4. PDF 資料夾
+// ============================================================
+function scanFolder(folderId) {
+  if (!folderId) throw new Error('請提供資料夾 ID');
+  try {
+    const folder=DriveApp.getFolderById(folderId),files=folder.getFilesByType(MimeType.PDF),result=[];
+    while(files.hasNext()){const f=files.next();result.push({id:f.getId(),name:f.getName(),size:f.getSize()});}
+    return result;
+  } catch(e) { throw new Error('無法存取資料夾：'+e.message); }
+}
+
+function extractPdfText(fileId) {
+  const cache=CacheService.getScriptCache(),key='PDF_'+fileId,hit=cache.get(key);if(hit)return hit;
+  try {
+    const blob=DriveApp.getFileById(fileId).getBlob();
+    const docId=Drive.Files.insert({title:'tmp_ocr_'+fileId,mimeType:MimeType.GOOGLE_DOCS},blob).id;
+    const text=DocumentApp.openById(docId).getBody().getText().substring(0,8000);
+    Drive.Files.remove(docId);
+    try{cache.put(key,text,3600);}catch(e){}
+    return text;
+  } catch(e) { Logger.log('PDF 擷取失敗：'+e.message); return ''; }
+}
+
+// ============================================================
+// 5. Prompt 建構
+// ============================================================
+function _buildPrompt(subject, grade, nodes, qcount, pdfText, mode) {
+  const cfg = getConfig();
+  const nodeList = (nodes||[]).map((n,i)=>(i+1)+'. 「'+n+'」').join('\n');
+  let pdfSection = '';
+  if (pdfText) pdfSection = (mode==='mixed')
+    ? '\n\n【參考教材（優先參考）】\n---\n'+pdfText+'\n---'
+    : '\n\n【教材（所有題目必須依據此教材）】\n---\n'+pdfText+'\n---';
+  let tpl = (subject==='國語') ? String(cfg.ChinesePrompt||'') : String(cfg.MathPrompt||'');
+  if (!tpl) tpl = '為「{{GRADE}}」學生針對節點：\n{{NODES}}\n生成{{QCOUNT}}題選擇題。\n只輸出JSON：[{"node":"","level":"D","text":"","type":"single","options":["","","",""],"answer":"A","difficulty":"easy","hint":""}]';
+  return tpl.replace(/\{\{GRADE\}\}/g,grade).replace(/\{\{NODES\}\}/g,nodeList).replace(/\{\{QCOUNT\}\}/g,String(qcount||1)).replace(/\{\{PDF_CONTEXT\}\}/g,pdfSection);
+}
+
+function _buildGeneralPrompt(subject, grade, qcount) {
+  if (subject==='國語') return '你是台灣國小國語文教師。\n請為「'+grade+'」學生出 '+qcount+' 題基礎國語練習題，涵蓋字音字形字詞釋義。\n只輸出JSON陣列，選項不加前綴，answer填A/B/C/D：\n[{"node":"基礎練習","level":"C","text":"題目","type":"single","options":["選項1","選項2","選項3","選項4"],"answer":"A","difficulty":"easy","hint":"說明"}]';
+  return '你是台灣國小數學科教師。\n請為「'+grade+'」學生出 '+qcount+' 題基礎數學練習題，涵蓋四則運算。\n只輸出JSON陣列，算式用文字，選項不加前綴，answer填A/B/C/D：\n[{"node":"基礎練習","level":"D","text":"題目","type":"single","options":["選項1","選項2","選項3","選項4"],"answer":"A","difficulty":"easy","hint":"說明"}]';
+}
+
+function _parseAI(rawText) {
+  const clean = String(rawText||'').replace(/```json/gi,'').replace(/```/g,'').trim();
+  try { const r=JSON.parse(clean); if(Array.isArray(r)&&r.length>0)return r; } catch(e) {}
+  const s=clean.indexOf('['),end=clean.lastIndexOf(']');
+  if (s>=0&&end>s) { try { const r=JSON.parse(clean.substring(s,end+1)); if(Array.isArray(r)&&r.length>0)return r; } catch(e) {} }
+  const objs=[],re=/\{[^{}]*(?:"[^"]*"[^{}]*)*\}/g;let match;
+  while((match=re.exec(clean))!==null){try{const o=JSON.parse(match[0]);if(o&&o.text&&o.options)objs.push(o);}catch(e){}}
+  if (objs.length>0) return objs;
+  throw new Error('AI 回傳格式無法解析：'+clean.substring(0,200));
+}
+
+// ============================================================
+// 6. 節點有效性
+// ============================================================
+function _isValid(node) {
+  const s = String(node||'').trim();
+  if (!s) return false;
+  if (['-','未診斷','未精熟','未作答','精熟','不通過','0'].includes(s)) return false;
+  if (/^\d+(\.\d+)?$/.test(s)) return false;
+  if (s.length<3) return false;
+  return true;
+}
+
+// ============================================================
+// 7. 批次出題引擎
+// ============================================================
+function _doGenerateBatch(nodesArray, grade, subject, batchIndex, pdfText, mode) {
+  const BATCH_SIZE=5, QCOUNT=3;
+  const safeArray  = nodesArray||[];
+  const validNodes = safeArray.map(n=>String(n||'').trim()).filter(_isValid);
+  const hasInvalid = safeArray.some(n=>n&&!_isValid(String(n||'').trim()));
+  const nodeBatches=[];
+  for (let i=0;i<validNodes.length;i+=BATCH_SIZE) nodeBatches.push({nodes:validNodes.slice(i,i+BATCH_SIZE),isGeneral:false});
+  if (validNodes.length===0||hasInvalid) nodeBatches.push({nodes:['通用基礎練習'],isGeneral:true});
+  const total=nodeBatches.length;
+  if (batchIndex>=total) {
+    try{CacheService.getScriptCache().remove('BankData_V3');}catch(e){}
+    return {done:true,current:total,total,message:'✅ 全部完成！共 '+total+' 批次。'};
+  }
+  const batch=nodeBatches[batchIndex];
+  let prompt,maxTok;
+  if (batch.isGeneral) { prompt=_buildGeneralPrompt(subject,grade,10); maxTok=3072; }
+  else { prompt=_buildPrompt(subject,grade,batch.nodes,QCOUNT,pdfText,mode||'ai'); maxTok=Math.min(8192,batch.nodes.length*QCOUNT*500+512); }
+  const rawText=_callGemini(prompt,maxTok,true);
+  let questions=[];
+  try {
+    questions=_parseAI(rawText);
+    questions=(questions||[]).filter(q=>q&&q.text&&Array.isArray(q.options)&&q.options.length>=2);
+  } catch(parseErr) { Logger.log('[解析失敗] batch='+batchIndex+' error='+parseErr.message); questions=[]; }
+  const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  if (!bank) throw new Error('Bank 分頁不存在，請先初始化資料庫');
+  const ts=Date.now().toString().slice(-6);
+  const newRows=questions.map((q,idx)=>{
+    const lv=q.level||'D';
+    const nd=batch.isGeneral?('通用練習('+subject+grade+')'):(q.node||batch.nodes[0]);
+    return ['AI-'+subject+'-'+ts+'-'+batchIndex+'-'+idx,nd,String(q.text||''),q.type||'single',JSON.stringify(q.options||[]),_normAnswer(q.answer),q.difficulty||'easy',grade,subject,'[Level '+lv+'] '+(q.hint||'')];
+  });
+  if (newRows.length>0) {
+    const lastRow=bank.getLastRow()||1;
+    bank.getRange(lastRow+1,1,newRows.length,10).setValues(newRows);
+    bank.getRange(lastRow+1,6,newRows.length,1).setNumberFormat('@STRING@');
+  }
+  const isLast=(batchIndex+1>=total);
+  if (isLast) try{CacheService.getScriptCache().remove('BankData_V3');}catch(e){}
+  const nodeLabel=batch.isGeneral?'通用練習':batch.nodes.join('、');
+  return {done:isLast,current:batchIndex+1,total,addedThisBatch:newRows.length,message:'['+subject+'] 第 '+(batchIndex+1)+'/'+total+' 批完成（'+nodeLabel+'）— 新增 '+newRows.length+' 題'};
+}
+
+function generateBatch(nodesArray,grade,subject,batchIndex){return _doGenerateBatch(nodesArray,grade,subject||'數學',batchIndex,null,'ai');}
+function generateBatchFromFolder(folderId,nodesArray,grade,subject,batchIndex,mode){
+  let pdfText='';
+  if(folderId){try{const files=scanFolder(folderId),texts=[];for(let i=0;i<Math.min(files.length,3);i++){const t=extractPdfText(files[i].id);if(t)texts.push(t);if(texts.join('').length>6000)break;}pdfText=texts.join('\n\n').substring(0,8000);}catch(e){pdfText='';}}
+  return _doGenerateBatch(nodesArray,grade,subject||'數學',batchIndex,pdfText,mode||'mixed');
+}
+function regenerateBatchForTask(taskName,batchIndex,mode,folderId){
+  const task=getTasks().find(t=>t.taskName===taskName);
+  if(!task) throw new Error('找不到任務：'+taskName);
+  const validNodes=(task.weakNodes||[]).filter(_isValid);
+  let pdfText='';
+  if((mode==='pdf'||mode==='mixed')&&folderId){try{const files=scanFolder(folderId),texts=[];for(let i=0;i<Math.min(files.length,3);i++){const t=extractPdfText(files[i].id);if(t)texts.push(t);}pdfText=texts.join('\n\n').substring(0,8000);}catch(e){}}
+  return _doGenerateBatch(validNodes.length>0?validNodes:['通用基礎練習'],task.grade,task.subject,batchIndex,pdfText,mode||'ai');
+}
+function _normAnswer(str){if(str===null||str===undefined)return '';return String(str).trim().replace(/\s+/g,'').toUpperCase().charAt(0)||'A';}
+
+// ============================================================
+// 8. 出題（從題庫取題）
+// ============================================================
+function generateQuiz(weakNode, taskName) {
+  const cache=CacheService.getScriptCache(),cacheKey='BankData_V3';
+  let bankRows=null;const cached=cache.get(cacheKey);
+  if(cached){try{bankRows=JSON.parse(cached);}catch(e){bankRows=null;}}
+  if(!bankRows){
+    const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+    if(!bank||bank.getLastRow()<2) return [];
+    bankRows=bank.getDataRange().getValues().slice(1).filter(r=>r[0]);
+    try{cache.put(cacheKey,JSON.stringify(bankRows),600);}catch(e){}
+  }
+  let subject='';
+  if(taskName){const tSheet=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Tasks');
+    if(tSheet&&tSheet.getLastRow()>1){const tRows=tSheet.getDataRange().getValues();
+      for(let i=1;i<tRows.length;i++){if(String(tRows[i][0])===String(taskName)){subject=String(tRows[i][2]||'');break;}}}}
+  const qCount=parseInt(getConfig().QuizCount,10)||10;
+  const isValid=weakNode&&_isValid(weakNode);
+  let pool=bankRows.filter(r=>{
+    const nd=String(r[1]||'');
+    const nodeOk=isValid?(nd.includes(weakNode)||weakNode.includes(nd)):(nd.includes('通用練習')||nd.includes('基礎練習'));
+    return nodeOk&&(!subject||String(r[8]||'')===subject)&&r[2];
+  });
+  if(pool.length<qCount) pool=pool.concat(bankRows.filter(r=>r[2]&&(!subject||String(r[8]||'')===subject)&&!pool.includes(r)));
+  return pool.sort(()=>Math.random()-.5).slice(0,qCount).map(r=>({
+    id:r[0],node:String(r[1]||''),text:String(r[2]||''),type:String(r[3]||'single'),
+    options:_tryJSON(r[4],[]),answer:String(r[5]||''),difficulty:String(r[6]||'easy'),
+    grade:String(r[7]||''),subject:String(r[8]||''),hint:String(r[9]||'')
+  }));
+}
+
+// ============================================================
+// 9. 提交與查詢成績
+// ============================================================
+function submitQuizResult(payload) {
+  if(!payload) throw new Error('無作答資料');
+  const res=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Results');
+  if(!res) throw new Error('Results 分頁不存在，請先初始化');
+  const {taskName,number,name,score,elapsed,details}=payload;
+  res.appendRow([new Date().toLocaleString('zh-TW'),taskName||'',number||'',name||'',(score!==undefined)?score:'',elapsed||0,JSON.stringify(details||[])]);
+  return {success:true,score};
+}
+
+function getTaskResults(taskName) {
+  if(!taskName) throw new Error('請提供任務名稱');
+  const res=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Results');
+  if(!res||res.getLastRow()<2) return [];
+  return res.getDataRange().getValues().slice(1)
+    .filter(r=>r[0]!==null&&r[0]!==undefined&&String(r[0]).trim()&&String(r[1])===String(taskName))
+    .map(r=>({time:String(r[0]),taskName:String(r[1]),number:String(r[2]),name:String(r[3]),score:Number(r[4]),elapsed:Number(r[5]),details:_tryJSON(r[6],[])}));
+}
+
+function getQuestionErrorRates(taskName) {
+  const em={};
+  getTaskResults(taskName).forEach(r=>(r.details||[]).forEach(d=>{
+    const k=d.node||d.text||'未知';if(!em[k])em[k]={node:d.node||'',total:0,wrong:0};
+    em[k].total++;if(!d.correct)em[k].wrong++;
+  }));
+  return Object.entries(em).map(([k,v])=>({question:k,node:v.node,total:v.total,wrong:v.wrong,errorRate:v.total>0?Math.round(v.wrong/v.total*100):0})).sort((a,b)=>b.errorRate-a.errorRate);
+}
+
+function analyzeClassWeakNodes(taskName) {
+  const nm={};
+  getTaskResults(taskName).forEach(r=>(r.details||[]).forEach(d=>{
+    const nd=d.node||'未知';
+    if(!nm[nd])nm[nd]={total:0,wrong:0,byLevel:{A:0,B:0,C:0,D:0,AW:0,BW:0,CW:0,DW:0}};
+    nm[nd].total++;if(!d.correct)nm[nd].wrong++;
+    const lv=d.level||(d.hint&&d.hint.match(/Level ([ABCD])/)?.[1])||'';
+    if(lv&&nm[nd].byLevel[lv]!==undefined){nm[nd].byLevel[lv]++;if(!d.correct)nm[nd].byLevel[lv+'W']++;}
+  }));
+  return Object.entries(nm).map(([nd,v])=>({
+    node:nd,total:v.total,wrong:v.wrong,errorRate:v.total>0?Math.round(v.wrong/v.total*100):0,
+    levelStats:['A','B','C','D'].map(lv=>({level:lv,total:v.byLevel[lv]||0,wrong:v.byLevel[lv+'W']||0,
+      errorRate:(v.byLevel[lv]||0)>0?Math.round((v.byLevel[lv+'W']||0)/v.byLevel[lv]*100):null})).filter(l=>l.total>0)
+  })).sort((a,b)=>b.errorRate-a.errorRate).slice(0,10);
+}
+
+function generateTeachingWorksheet(topNodes, grade, subject) {
+  const cfg=getConfig(),isChinese=subject==='國語';
+  let tpl=String(cfg[isChinese?'ChineseWorksheetPrompt':'MathWorksheetPrompt']||'');
+  if(!tpl) tpl='請為「{{GRADE}}」學生設計 A4 差異化學習單（HTML）。節點：\n{{NODES}}\n只輸出HTML。';
+  const nodeList=(topNodes||[]).slice(0,3).map((n,i)=>(i+1)+'. '+n).join('\n');
+  const prompt=tpl.replace(/\{\{GRADE\}\}/g,grade||'').replace(/\{\{NODES\}\}/g,nodeList).replace(/\{\{PDF_CONTEXT\}\}/g,'');
+  return _callGemini(prompt,4096).replace(/```html/gi,'').replace(/```/g,'').trim();
+}
+
+function getSimilarQuestions(node, grade, subject, limit) {
+  const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  if(!bank||bank.getLastRow()<2)return[];
+  return bank.getDataRange().getValues().slice(1)
+    .filter(r=>{const nd=String(r[1]||'');return(nd.includes(node)||node.includes(nd))&&(!grade||String(r[7]||'')===grade)&&(!subject||String(r[8]||'')===subject)&&r[2];})
+    .map(r=>({text:String(r[2]||''),type:String(r[3]||'single'),options:_tryJSON(r[4],[]),answer:String(r[5]||''),difficulty:String(r[6]||''),hint:String(r[9]||'')}))
+    .sort(()=>Math.random()-.5).slice(0,limit||3);
+}
+
+function getTaskQuestions(taskName) {
+  const task=getTasks().find(t=>t.taskName===taskName);
+  if(!task)return{questions:[],total:0};
+  const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  if(!bank||bank.getLastRow()<2)return{questions:[],total:0};
+  const nodes=task.weakNodes||[];
+  const questions=bank.getDataRange().getValues().slice(1).filter(r=>{
+    return(!task.subject||String(r[8]||'')===task.subject)&&(!task.grade||String(r[7]||'')===task.grade)&&
+      (nodes.length===0||nodes.some(n=>String(r[1]||'').includes(n)||n.includes(String(r[1]||''))))&&r[2];
+  }).map(r=>({id:String(r[0]||''),node:String(r[1]||''),text:String(r[2]||''),type:String(r[3]||'single'),
+    options:_tryJSON(r[4],[]),answer:String(r[5]||''),difficulty:String(r[6]||''),hint:String(r[9]||'').replace(/^\[Level [ABCD]\]\s*/,'')}));
+  return{questions,total:questions.length,grade:task.grade,subject:task.subject};
+}
+
+function getPracticeQuestionsForErrors(taskName) {
+  const results=getTaskResults(taskName);if(!results.length)return[];
+  const task=getTasks().find(t=>t.taskName===taskName);
+  const grade=task?.grade||'',subject=task?.subject||'';
+  const nm={};
+  results.forEach(r=>(r.details||[]).forEach(d=>{
+    if(!d.correct){const nd=d.node||'未知';if(!nm[nd])nm[nd]={count:0,wrongTexts:new Set()};nm[nd].count++;if(d.text)nm[nd].wrongTexts.add(d.text);}
+  }));
+  if(!Object.keys(nm).length)return[];
+  const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  const bankRows=(bank&&bank.getLastRow()>=2)?bank.getDataRange().getValues().slice(1):[];
+  const top3=Object.entries(nm).sort((a,b)=>b[1].count-a[1].count).slice(0,3);
+  return top3.map(([node,data])=>{
+    const pool=bankRows.filter(r=>{
+      const nd=String(r[1]||'');
+      return(nd.includes(node)||node.includes(nd))&&(!subject||String(r[8]||'')===subject)&&(!grade||String(r[7]||'')===grade)&&!data.wrongTexts.has(String(r[2]||''))&&r[2];
+    });
+    const questions=pool.sort(()=>Math.random()-.5).slice(0,3).map(r=>({
+      text:String(r[2]||''),type:String(r[3]||'single'),options:_tryJSON(r[4],[]),answer:String(r[5]||''),
+      difficulty:String(r[6]||''),hint:String(r[9]||'').replace(/^\[Level [ABCD]\]\s*/,''),
+      level:(String(r[9]||'').match(/Level ([ABCD])/)||[])[1]||'D'
+    }));
+    if(questions.length<2){
+      try{
+        const prompt=_buildPrompt(subject,grade,[node],3,null,'ai')+'\n\n注意：請出與以下題目「不同」的類似題：\n'+[...data.wrongTexts].slice(0,3).join('\n');
+        const rawText=_callGemini(prompt,2048,true);
+        const aiQs=_parseAI(rawText).filter(q=>q&&q.text&&Array.isArray(q.options)&&q.options.length>=2).slice(0,3-questions.length)
+          .map(q=>({text:String(q.text||''),type:q.type||'single',options:q.options||[],answer:_normAnswer(q.answer),difficulty:q.difficulty||'easy',hint:q.hint||'',level:q.level||'D'}));
+        questions.push(...aiQs);
+      }catch(e){Logger.log('[getPracticeQuestionsForErrors] AI 補題失敗：'+e.message);}
+    }
+    return{node,errorCount:data.count,questions};
+  }).filter(i=>i.questions.length>0);
+}
+
+// ============================================================
+// 10. 題庫快取與清理
+// ============================================================
+function clearBankCache(){try{CacheService.getScriptCache().remove('BankData_V3');}catch(e){}return'✅ 題庫快取已清除';}
+function clearNodesFromBank(nodesArray,grade,subject){
+  const nodes=(nodesArray||[]).filter(_isValid);if(!nodes.length)throw new Error('請提供有效節點清單');
+  const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  if(!bank||bank.getLastRow()<2)return'題庫為空，無需清除';
+  const rows=bank.getDataRange().getValues();let deleted=0;
+  for(let i=rows.length-1;i>=1;i--){
+    const nd=String(rows[i][1]||''),g=String(rows[i][7]||''),s=String(rows[i][8]||'');
+    if(nodes.some(n=>nd.includes(n)||n.includes(nd))&&(!grade||g===grade)&&(!subject||s===subject)){bank.deleteRow(i+1);deleted++;}
+  }
+  clearBankCache();return'✅ 已清除 '+deleted+' 題';
+}
+function cleanResultsSheet(){
+  const sheet=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Results');if(!sheet)return'找不到 Results 分頁';
+  const rows=sheet.getDataRange().getValues();let deleted=0;
+  for(let i=rows.length-1;i>=1;i--){if(!rows[i].some(c=>c!==null&&c!==undefined&&String(c).trim())){sheet.deleteRow(i+1);deleted++;}}
+  return'已清除 '+deleted+' 列空白資料';
+}
+
+// ============================================================
+// 工具函式
+// ============================================================
+function _tryJSON(str,fallback){try{return JSON.parse(str);}catch(e){return fallback;}}
