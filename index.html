@@ -874,19 +874,30 @@ async function previewStudentList(taskName){
 async function previewBankQuestions(taskName){
   Swal.fire({title:'載入題目預覽…',allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
-    // ★ v9.1 修正：改回 v9.0 的 generateQuiz(null, taskName)
-    // 原因：generateQuiz 使用 Bank 快取、回傳完整 level 欄位，比 getTaskQuestions 更穩定
-    const sample = await API.generateQuiz(null, taskName);
+    // ★ v9.1 修正：改用 getTaskQuestions 顯示該任務「全部」題目（含正確 level 欄位）
+    const res = await API.getTaskQuestions(taskName);
     Swal.close();
-    if(!sample||!sample.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
-    const previewHtml = `<div style="max-height:60vh; overflow-y:auto; padding-right:8px;">` +
-      sample.slice(0,8).map((q,i)=>{
-        const lvColor={'A':'badge-A','B':'badge-B','C':'badge-C','D':'badge-D'}, lv=q.level||'D';
+    const qs = res.questions || [];
+    if(!qs.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
+
+    // 依 Level 分組統計
+    const byLevel = {A:0,B:0,C:0,D:0};
+    qs.forEach(q=>{ const lv=q.level||'D'; if(byLevel[lv]!==undefined) byLevel[lv]++; });
+    const statsHtml = `<div class="d-flex gap-2 flex-wrap mb-3">
+      <span class="badge bg-secondary">共 ${qs.length} 題</span>
+      ${Object.entries(byLevel).filter(([,v])=>v>0).map(([lv,cnt])=>`<span class="badge badge-${lv}">Level ${lv}：${cnt}題</span>`).join('')}
+    </div>`;
+
+    const lvColor={'A':'badge-A','B':'badge-B','C':'badge-C','D':'badge-D'};
+    const previewHtml = statsHtml + `<div style="max-height:55vh; overflow-y:auto; padding-right:8px;">` +
+      qs.map((q,i)=>{
+        const lv=q.level||'D';
         const opts=(q.options||[]).map((o,j)=>{const isCorrect='ABCD'[j]===q.answer;return `<div class="py-1 d-flex align-items-start gap-1"><span class="badge ${isCorrect?'bg-success':'bg-light text-dark border'}">${'ABCD'[j]}</span><span class="small">${esc(o)}</span></div>`;}).join('');
-        const hint=q.hint?q.hint.replace(/^\[Level [ABCD]\]\s*/,''):'';
+        const hint=q.hint||'';
         return `<div class="border rounded p-3 mb-2 text-start"><div class="d-flex justify-content-between align-items-start mb-1"><span class="small fw-bold text-muted">【${esc(q.node)}】（第${i+1}題）</span><span class="badge ${lvColor[lv]||'bg-secondary'} ms-2 flex-shrink-0">Level ${lv}</span></div><div class="mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.7">${esc(q.text)}</div>${q.type==='single'?opts:''}<div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>${hint?`<div class="small text-secondary mt-1">💡 ${esc(hint)}</div>`:''}</div>`;
       }).join('') + `</div>`;
-    Swal.fire({title:`「${taskName}」題庫預覽（前8題）`,html:previewHtml,confirmButtonText:'關閉',width:'740px',customClass:{htmlContainer:'text-start px-2'}});
+
+    Swal.fire({title:`「${taskName}」題庫預覽（全 ${qs.length} 題）`,html:previewHtml,confirmButtonText:'關閉',width:'760px',customClass:{htmlContainer:'text-start px-2'}});
   }catch(e){Swal.close();Swal.fire({icon:'error',title:'預覽失敗',text:e.message});}
 }
 
@@ -1114,30 +1125,46 @@ async function genWorksheet(){
   }
 }
 
-function _sanitizeWsHtml(html){
-  // ★ v9.1 修正：移除 markdown fence、確保 UTF-8、補齊完整 HTML 結構
-  let s = String(html||'').replace(/^```html\s*/i,'').replace(/^```\s*/i,'').replace(/```\s*$/,'').trim();
+function _sanitizeWsHtml(raw){
+  // ★ v9.1 全面強化：四道防線確保輸出永遠是有效 HTML
+  let s = String(raw||'').trim();
   if(!s) return '<html><head><meta charset="UTF-8"></head><body><p>（無內容）</p></body></html>';
-  // 確保有 charset（防中文亂碼）
+
+  // 【第一道】移除 markdown code fence（```html ... ``` 或 ``` ... ```）
+  s = s.replace(/^```html\s*/i,'').replace(/^```\s*/i,'').replace(/```\s*$/,'').trim();
+
+  // 【第二道】從第一個 < 到最後一個 > 擷取（過濾 thinking 模型在 HTML 前後殘留的說明文字）
+  const firstTag = s.indexOf('<');
+  const lastTag  = s.lastIndexOf('>');
+  if(firstTag > 0 && lastTag > firstTag){
+    // 前面有非 HTML 文字（thinking 殘留），擷取 HTML 部分
+    s = s.substring(firstTag, lastTag + 1).trim();
+  } else if(firstTag < 0){
+    // 完全沒有 HTML 標籤（全是文字），包成簡單 HTML
+    s = '<p>' + s.replace(/\n/g,'<br>') + '</p>';
+  }
+
+  // 【第三道】確保有 UTF-8 charset（防中文亂碼）
   if(s.includes('<head>') && !s.match(/charset/i)){
     s = s.replace('<head>','<head><meta charset="UTF-8">');
   }
-  // 若只是 body 片段，補齊完整結構
+
+  // 【第四道】若只有 body 片段（無 <html>），補齊完整結構
   if(!s.includes('<html')){
-    s = `<!DOCTYPE html><html lang="zh-TW"><head>
+    s = \`<!DOCTYPE html><html lang="zh-TW"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}
-  h1,h2,h3{color:#1e88e5;}
-  table{border-collapse:collapse;width:100%;}
-  td,th{border:1px solid #ccc;padding:6px 10px;}
-  .c-level{border:2px solid #1565c0;padding:10px;margin:10px 0;}
-  .b-level{border:2px solid #f57c00;padding:10px;margin:10px 0;}
-  .a-level{border:2px solid #d32f2f;padding:10px;margin:10px 0;}
-  .answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
+  h1,h2,h3,h4{color:#1e88e5;} h1{font-size:1.4rem;} h2{font-size:1.2rem;} h3{font-size:1.1rem;}
+  table{border-collapse:collapse;width:100%;} td,th{border:1px solid #ccc;padding:6px 10px;}
+  .c-box,.c-level{border:2px solid #1565c0;padding:10px;margin:10px 0;border-radius:6px;}
+  .b-box,.b-level{border:2px solid #f57c00;padding:10px;margin:10px 0;border-radius:6px;}
+  .a-box,.a-level{border:2px solid #d32f2f;padding:10px;margin:10px 0;border-radius:6px;}
+  .answer-key,.answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
   .student-space{height:60px;border-bottom:1px solid #aaa;margin:10px 0;}
-</style></head><body>${s}</body></html>`;
+  .section{margin-bottom:20px;}
+</style></head><body>\${s}</body></html>\`;
   }
   return s;
 }
