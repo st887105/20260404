@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -55,12 +56,37 @@
 
     /* ── 計算紙 ── */
     #scratch-btn{position:fixed;bottom:80px;right:18px;z-index:1000;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;font-size:1.2rem;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;display:none;align-items:center;justify-content:center;}
-    #scratch-modal{position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;visibility:hidden;opacity:0;transition:opacity .22s,visibility .22s;cursor:pointer;}
-    #scratch-modal.is-open{visibility:visible;opacity:1;}
-    #scratch-inner{cursor:default;background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:16px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,.15);padding-bottom:max(16px,env(safe-area-inset-bottom));transform:translateY(16px);transition:transform .25s;}
-    #scratch-modal.is-open #scratch-inner{transform:translateY(0);}
-    #scratch-pad{flex:1;resize:none;border:2px solid #e0e0e0;border-radius:10px;padding:12px;font-size:1rem;min-height:220px;-webkit-user-select:text!important;user-select:text!important;pointer-events:all;touch-action:auto;-webkit-overflow-scrolling:touch;cursor:text;}
-    #scratch-pad:focus{border-color:var(--primary);outline:none;}
+    /* 改用 display:none/flex 切換，避免 iOS Safari 在 visibility:hidden 父層中 focus 失效 */
+    #scratch-modal{position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;cursor:pointer;
+      /* iOS Safari: 必須讓整個 overlay 可接受觸控 */
+      -webkit-tap-highlight-color:transparent;}
+    #scratch-modal.is-open{display:flex;}
+    #scratch-inner{
+      cursor:default;background:#fff;width:100%;max-width:640px;
+      border-radius:20px 20px 0 0;padding:16px;
+      max-height:75vh;display:flex;flex-direction:column;
+      box-shadow:0 -4px 20px rgba(0,0,0,.15);
+      padding-bottom:max(16px,env(safe-area-inset-bottom));
+      /* 讓 inner 本身可滾動，避免外層 overflow 影響 textarea */
+      overflow-y:auto;-webkit-overflow-scrolling:touch;
+    }
+    #scratch-pad{
+      flex:1;resize:none;
+      border:2px solid #e0e0e0;border-radius:10px;
+      padding:12px;font-size:1rem;line-height:1.6;
+      min-height:220px;
+      /* 關鍵：iOS 需要這些屬性才能正常輸入 */
+      -webkit-user-select:text!important;user-select:text!important;
+      pointer-events:auto!important;
+      touch-action:manipulation;
+      -webkit-appearance:none;appearance:none;
+      /* 避免 iOS 自動縮放 */
+      font-size:max(16px,1rem);
+      cursor:text;
+      /* 讓 textarea 自身處理滾動 */
+      overflow-y:auto;-webkit-overflow-scrolling:touch;
+    }
+    #scratch-pad:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px rgba(30,136,229,.15);}
 
     /* ── 學習單 iframe ── */
     #ws-preview-area{border-radius:12px;margin-top:12px;border:1px solid #e0e0e0;-webkit-overflow-scrolling:touch;overflow:auto;}
@@ -349,10 +375,36 @@
                     </div>
                     <hr>
                     <div class="mb-3">
-                      <label class="form-label text-muted small fw-bold">AI 模型名稱</label>
-                      <div class="input-group input-group-sm"><input type="text" id="setting-gemini-model" class="form-control font-monospace" placeholder="gemini-2.5-flash"><button class="btn btn-outline-primary" onclick="saveGeminiSettings()">儲存</button></div>
-                      <div class="form-check mt-1"><input class="form-check-input" type="checkbox" id="setting-is-paid"><label class="form-check-label small" for="setting-is-paid">付費帳號</label></div>
-                      <div class="small text-muted mt-1">免費可用：<code>gemini-2.5-flash</code> / <code>gemini-2.0-flash-lite</code><span id="gemini-status-badge" class="ms-2"></span></div>
+                      <label class="form-label text-muted small fw-bold">AI 模型選擇</label>
+                      <!-- ★ 改為下拉選單，預設最佳模型優先 -->
+                      <div class="input-group input-group-sm">
+                        <select id="setting-gemini-model" class="form-select font-monospace">
+                          <optgroup label="🏆 推薦（免費配額充足）">
+                            <option value="gemma-4-31b-it">gemma-4-31b-it（推薦｜1500次/天｜強）</option>
+                          </optgroup>
+                          <optgroup label="⚡ Gemini 2.5 系列（2026 最新）">
+                            <option value="gemini-2.5-flash">gemini-2.5-flash（免費｜20次/分｜快）</option>
+                            <option value="gemini-2.5-pro">gemini-2.5-pro（付費｜最強）</option>
+                          </optgroup>
+                          <optgroup label="🔵 Gemini 2.0 系列">
+                            <option value="gemini-2.0-flash">gemini-2.0-flash（免費｜穩定）</option>
+                            <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite（免費｜最快）</option>
+                          </optgroup>
+                          <optgroup label="📦 舊版（備用）">
+                            <option value="gemini-1.5-flash">gemini-1.5-flash（備用）</option>
+                          </optgroup>
+                        </select>
+                        <button class="btn btn-outline-primary" onclick="saveGeminiSettings()">儲存</button>
+                      </div>
+                      <div class="form-check mt-1"><input class="form-check-input" type="checkbox" id="setting-is-paid"><label class="form-check-label small" for="setting-is-paid">付費帳號（解除速率限制）</label></div>
+                      <div class="small text-muted mt-1">
+                        免費推薦：<code>gemma-4-31b-it</code>（1500次/天）<br>
+                        次選：<code>gemini-2.5-flash</code> / <code>gemini-2.0-flash-lite</code>
+                        <span id="gemini-status-badge" class="ms-2"></span>
+                      </div>
+                      <div class="alert alert-info py-2 px-3 mt-2 small">
+                        💡 <b>模型降級保護：</b>若首選模型配額不足，系統自動依序嘗試備用模型，確保出題不中斷。
+                      </div>
                     </div>
                     <hr>
                     <button class="btn btn-outline-danger w-100 mb-2" onclick="API.clearBankCache().then(m=>Swal.fire({icon:'success',title:m,timer:1500,showConfirmButton:false})).catch(e=>Swal.fire({icon:'error',title:e.message}))"><i class="fa-solid fa-broom me-1"></i>清除題庫快取</button>
@@ -453,14 +505,48 @@ const app = {
 
 /* ═══════════════════════════════════════════════════════
    API 層
+   ─────────────────────────────────────────────────────
+   關鍵修正：
+   1. redirect:'follow' — GAS 會做 302 redirect，
+      若不 follow，POST body 會在 redirect 後遺失
+   2. submitQuizResult 獨立重試機制（最多3次）
+      確保成績一定能提交到後台
 ═══════════════════════════════════════════════════════ */
 const API = {
   _call: async (action, data={}) => {
-    const resp = await fetch(app.gasUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action,data})});
+    const resp = await fetch(app.gasUrl,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action,data}),
+      redirect:'follow'   // ★ 修正：GAS 302 redirect 後 body 不丟失
+    });
     if(!resp.ok) throw new Error(`HTTP ${resp.status}：無法連線 GAS`);
     const json = await resp.json();
     if(json.status!=='success') throw new Error(json.message||'後端錯誤');
     return json.data;
+  },
+  /* ★ 修正：成績提交專用，失敗自動重試最多3次，確保成績一定寫入後台 */
+  _submitWithRetry: async (action, data={}, maxRetries=3) => {
+    let lastError;
+    for(let attempt=1; attempt<=maxRetries; attempt++){
+      try{
+        const resp = await fetch(app.gasUrl,{
+          method:'POST',
+          headers:{'Content-Type':'text/plain'},
+          body:JSON.stringify({action,data}),
+          redirect:'follow'
+        });
+        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const json = await resp.json();
+        if(json.status!=='success') throw new Error(json.message||'後端錯誤');
+        return json.data;
+      }catch(e){
+        lastError=e;
+        console.warn(`[submitRetry] 第${attempt}次失敗：${e.message}`);
+        if(attempt<maxRetries) await new Promise(r=>setTimeout(r,1500*attempt));
+      }
+    }
+    throw lastError;
   },
   getTasks:()=>API._call('getTasks'),
   getStudents:(n)=>API._call('getStudents',{taskName:n}),
@@ -479,7 +565,7 @@ const API = {
   generateBatchFromFolder:(f,a,g,s,i,m)=>API._call('generateBatchFromFolder',{folderId:f,nodesArray:a,grade:g,subject:s,batchIndex:i,mode:m}),
   regenerateBatchForTask:(n,i,m,f)=>API._call('regenerateBatchForTask',{taskName:n,batchIndex:i,mode:m,folderId:f}),
   generateQuiz:(w,t)=>API._call('generateQuiz',{weakNode:w,taskName:t}),
-  submitQuizResult:(p)=>API._call('submitQuizResult',{payload:p}),
+  submitQuizResult:(p)=>API._submitWithRetry('submitQuizResult',{payload:p}),
   getTaskResults:(n)=>API._call('getTaskResults',{taskName:n}),
   analyzeClassWeakNodes:(n)=>API._call('analyzeClassWeakNodes',{taskName:n}),
   generateTeachingWorksheet:(n,g,s)=>API._call('generateTeachingWorksheet',{topNodes:n,grade:g,subject:s}),
@@ -510,11 +596,14 @@ window.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('wiz-custom-node')?.addEventListener('keydown',e=>{if(e.key==='Enter')addWizCustomNode();});
   updateWizNodePresets();
   addWizStudentRows(5);
-  const modal=document.getElementById('scratch-modal'),inner=document.getElementById('scratch-inner');
-  modal.addEventListener('click',e=>{if(!inner.contains(e.target))closeScratch();});
-  modal.addEventListener('touchend',e=>{if(!inner.contains(e.target))closeScratch();},{passive:true});
-  inner.addEventListener('click',e=>e.stopPropagation());
-  inner.addEventListener('touchend',e=>e.stopPropagation(),{passive:true});
+
+  /* ── 計算紙 Modal 事件（跨平台修正版）──
+   * 核心原則：只判斷 e.target 是否為 overlay 本身，不 stopPropagation
+   * stopPropagation 在 iOS 上會切斷 user-gesture 鏈，導致 textarea 無法獲得焦點 */
+  const modal=document.getElementById('scratch-modal');
+  modal.addEventListener('pointerdown',e=>{
+    if(e.target===modal) closeScratch();
+  });
 });
 
 /* ═══════════════════════════════════════════════════════
@@ -1190,7 +1279,15 @@ async function loadSettingsTab(){
     document.getElementById('setting-quiz-count').value=settings.quizCount;
     document.getElementById('setting-folder-id').value=folderId||'';
     document.getElementById('setting-help-url').value=helpUrl||'';
-    document.getElementById('setting-gemini-model').value=gemini.model;
+    // ★ 修正：select 元素用 value 指定選中項；若後台存的值不在選項中，動態新增
+    const modelSel=document.getElementById('setting-gemini-model');
+    const savedModel=gemini.model||'gemma-4-31b-it';
+    // 檢查是否有對應選項，沒有則新增
+    if(![...modelSel.options].some(o=>o.value===savedModel)){
+      const opt=document.createElement('option');opt.value=savedModel;opt.textContent=savedModel+'（自訂）';
+      modelSel.appendChild(opt);
+    }
+    modelSel.value=savedModel;
     document.getElementById('setting-is-paid').checked=gemini.isPaid;
     document.getElementById('prompt-math').value=prompts.mathPrompt||'';
     document.getElementById('prompt-chinese').value=prompts.chinesePrompt||'';
@@ -1280,7 +1377,21 @@ async function finishQuiz(){
   clearInterval(app.timerInterval);
   const elapsed=Math.round((Date.now()-app.startTime)/1000),total=app.answers.length,correct=app.answers.filter(a=>a.correct).length;
   const score=total>0?Math.round(correct/total*100):0;
-  try{await API.submitQuizResult({taskName:app.currentTask?.taskName||'',number:app.currentStudent.number,name:app.currentStudent.name,score,elapsed,details:app.answers});}catch(e){console.warn('提交結果失敗:',e.message);}
+
+  /* ★ 修正：成績提交失敗顯示警告，不再靜默吞掉
+   * 使用 _submitWithRetry 自動重試3次，三次全失敗才警告老師 */
+  let submitOk=false;
+  try{
+    await API.submitQuizResult({taskName:app.currentTask?.taskName||'',number:app.currentStudent.number,name:app.currentStudent.name,score,elapsed,details:app.answers});
+    submitOk=true;
+  }catch(e){
+    console.error('[finishQuiz] 成績提交最終失敗：',e.message);
+    // 非同步警告，不阻塞結果頁顯示
+    setTimeout(()=>{
+      Swal.fire({icon:'warning',title:'⚠️ 成績上傳失敗',html:`您的作答結果 <b>${score} 分</b> 已完成，但無法儲存到後台。<br><small class="text-muted">錯誤：${e.message}</small><br><br>請告知老師手動補登。`,confirmButtonText:'我知道了'});
+    },500);
+  }
+
   showView('result');
   document.getElementById('result-name').textContent=formatStudentLabel(app.currentStudent);
   document.getElementById('result-score').textContent=score+' 分';
@@ -1296,13 +1407,29 @@ async function finishQuiz(){
 
 /* ═══════════════════════════════════════════════════════
    計算紙
+   ─────────────────────────────────────────────────────
+   iOS Safari 關鍵修正：
+   1. focus() 必須在 user gesture 的同步呼叫鏈中執行
+      （setTimeout 會切斷手勢鏈，鍵盤不會彈出）
+   2. 改用 display:none/flex 切換（visibility:hidden 父層
+      會造成 iOS focus 事件被攔截）
+   3. readOnly 技巧：先設 readOnly=false 再 focus，
+      強制 iOS 重新評估輸入能力
 ═══════════════════════════════════════════════════════ */
 function toggleScratch(){
   const modal=document.getElementById('scratch-modal');
   if(modal.classList.contains('is-open')){closeScratch();}
   else{
     modal.classList.add('is-open');
-    setTimeout(()=>{const pad=document.getElementById('scratch-pad');if(pad){pad.focus();pad.scrollIntoView({behavior:'smooth',block:'nearest'});}},180);
+    // ★ 關鍵：在同一個 user gesture 事件鏈中同步 focus
+    const pad=document.getElementById('scratch-pad');
+    if(pad){
+      pad.readOnly=false; // 強制 iOS 重新評估
+      pad.focus();
+      // 將游標移到末尾
+      const len=pad.value.length;
+      try{pad.setSelectionRange(len,len);}catch(e){}
+    }
   }
 }
 function closeScratch(){document.getElementById('scratch-modal').classList.remove('is-open');}
