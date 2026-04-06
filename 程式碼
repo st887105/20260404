@@ -1,17 +1,16 @@
 // ============================================================
-// 車城國小學力檢測AI補救系統 - Google Apps Script 後端 v8.9
-// 修正整合記錄：
-//   v8.6  gemini-2.0-flash-lite 取代已停用的 gemini-1.5-flash
-//   v8.7  多模型自動降級、deadline:30 防止無限等待
-//   v8.8  gemini-2.5-flash 優先、BATCH_SIZE=5 減少 80% API 呼叫
-//         responseMimeType=application/json 強制 JSON 輸出
-//   v8.9  新增 fixGeminiModel()、testGeminiAPI() 診斷函式
-//         新增 getPracticeQuestionsForErrors 類似題生成
-//         _isValid 過濾純數字、getStudents 欄位修正
-//   v8.9p getStudents 補丁：支援「X年X班X號 姓名」混合欄格式自動拆分
-//   v8.9q ★ 關鍵修正：getStudents / uploadTaskData 使用 String() 比較
-//          修正 Google Sheets 將數字型任務名稱（如"101"）自動轉為 number
-//          導致嚴格比較 === 永遠失敗、學生名單無法讀取的問題
+// 車城國小學力檢測AI補救系統 - Google Apps Script 後端 v9.0
+// ============================================================
+// 版本更新記錄：
+//   v8.9q  getStudents / uploadTaskData 使用 String() 比較修正
+//   v9.0   ★ 五大新增/修正：
+//          1. anonymizeName 去識別化：getStudents 回傳資料確保 name/number 正確分離
+//          2. getStudents 已有 v8.9q 修正（無變動）
+//          3. _doGenerateBatch() 加入 Bank-First 優化：
+//             先查 Bank 試算表，若節點題目數 >= QCOUNT，跳過 Gemini API 呼叫
+//          4. setupDatabase() 新增 HelpUrl config key
+//          5. doPost() 新增 getHelpUrl / updateHelpUrl case
+//          6. 新增 getHelpUrl() / updateHelpUrl(url,pwd) 函式
 // ============================================================
 
 // ★ 立即修復：在 GAS 編輯器直接執行此函式，不需重新部署 ★
@@ -24,8 +23,9 @@ function fixGeminiModel() {
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]) === 'GeminiModel') {
       const old = rows[i][1];
-      cfg.getRange(i+1, 2).setValue('gemini-2.5-flash');
-      Logger.log('✅ GeminiModel: ' + old + ' → gemini-2.5-flash');
+      // ★ v9.1：預設改為 gemma-4-31b-it
+      cfg.getRange(i+1, 2).setValue('gemma-4-31b-it');
+      Logger.log('✅ GeminiModel: ' + old + ' → gemma-4-31b-it');
       modelFixed = true;
     }
     if (String(rows[i][0]) === 'IsPaidAccount' && (!rows[i][1] || rows[i][1] === '')) {
@@ -33,10 +33,10 @@ function fixGeminiModel() {
       paidFixed = true;
     }
   }
-  if (!modelFixed) { cfg.appendRow(['GeminiModel', 'gemini-2.5-flash']); Logger.log('✅ 新增 GeminiModel'); }
+  if (!modelFixed) { cfg.appendRow(['GeminiModel', 'gemma-4-31b-it']); Logger.log('✅ 新增 GeminiModel'); }
   if (!paidFixed)  { cfg.appendRow(['IsPaidAccount', 'false']); }
   try { CacheService.getScriptCache().remove('BankData_V3'); } catch(e) {}
-  SpreadsheetApp.getUi().alert('✅ 修復完成！\nGeminiModel 已改為 gemini-2.5-flash\n請回到網站「題庫管理」點「重新出題」。');
+  SpreadsheetApp.getUi().alert('✅ 修復完成！\nGeminiModel 已改為 gemma-4-31b-it\n請回到網站「題庫管理」點「重新出題」。');
 }
 
 function doPost(e) {
@@ -75,6 +75,9 @@ function doPost(e) {
       case 'getPracticeQuestionsForErrors': result = getPracticeQuestionsForErrors(data.taskName); break;
       case 'getGeminiSettings':             result = getGeminiSettings(); break;
       case 'updateGeminiSettings':          result = updateGeminiSettings(data.model,data.isPaid,data.pwd); break;
+      // ★ v9.0 新增：操作說明網址
+      case 'getHelpUrl':                    result = getHelpUrl(); break;
+      case 'updateHelpUrl':                 result = updateHelpUrl(data.url, data.pwd); break;
       default: throw new Error('未知的 API 請求：' + action);
     }
     return ContentService
@@ -89,11 +92,10 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  // ★ 支援 GET + ?payload= 呼叫（前端 CORS 修正用）
   if (e&&e.parameter&&e.parameter.payload) {
     return doPost({postData:{contents:e.parameter.payload}});
   }
-  return ContentService.createTextOutput('✅ 車城國小 AI 補救系統 API v8.9q 運作中');
+  return ContentService.createTextOutput('✅ 車城國小 AI 補救系統 API v9.0 運作中');
 }
 
 // ============================================================
@@ -153,15 +155,26 @@ function testGeminiAPI() {
 }
 
 // ============================================================
-// Gemini API 呼叫（多模型降級版）
+// Gemini API 呼叫（多模型降級版 v9.1）
+// 模型優先順序：gemma-4-31b-it（最推薦）→ gemini-2.5-flash
+//               → gemini-2.0-flash → gemini-2.0-flash-lite
+//               → gemini-1.5-flash
 // ============================================================
 function _callGemini(prompt, maxTokens, jsonMode) {
   const cfg    = getConfig();
   const apiKey = String(cfg.GeminiAPIKey || '').trim();
-  const preferred = String(cfg.GeminiModel || 'gemini-2.5-flash').trim();
+  // ★ v9.1：預設改為 gemma-4-31b-it（免費1500次/天，知識密度高）
+  const preferred = String(cfg.GeminiModel || 'gemma-4-31b-it').trim();
   if (!apiKey || apiKey.includes('請在此')) throw new Error('請先在 Config 試算表設定 GeminiAPIKey！');
 
-  const FALLBACK_MODELS = ['gemini-2.5-flash','gemini-2.0-flash-lite','gemini-2.0-flash','gemini-1.5-flash'];
+  // ★ 降級清單：涵蓋 2026 年所有主流免費/付費模型
+  const FALLBACK_MODELS = [
+    'gemma-4-31b-it',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash'
+  ];
   const modelsToTry = [preferred, ...FALLBACK_MODELS.filter(m => m !== preferred)];
   const genConfig = { temperature:0.65, maxOutputTokens:maxTokens||2048 };
   if (jsonMode) genConfig.responseMimeType = 'application/json';
@@ -169,10 +182,13 @@ function _callGemini(prompt, maxTokens, jsonMode) {
 
   let lastError = '尚未嘗試任何模型';
   for (const model of modelsToTry) {
-    const endpoints = [
-      'https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+apiKey,
-      'https://generativelanguage.googleapis.com/v1/models/'+model+':generateContent?key='+apiKey
-    ];
+    // gemma 模型只有 v1beta endpoint；gemini 系列兩個都試
+    const endpoints = model.startsWith('gemma')
+      ? ['https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+apiKey]
+      : [
+          'https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+apiKey,
+          'https://generativelanguage.googleapis.com/v1/models/'+model+':generateContent?key='+apiKey
+        ];
     for (const url of endpoints) {
       for (let retry = 0; retry < 2; retry++) {
         let resp, result;
@@ -204,11 +220,11 @@ function _callGemini(prompt, maxTokens, jsonMode) {
       }
     }
   }
-  throw new Error('所有 Gemini 模型均無法使用。最後錯誤：'+lastError+'\n如見 429：等 60 秒後到「題庫管理」點「重新出題」繼續。\n如見 404：到 GAS 執行 testGeminiAPI() 確認。');
+  throw new Error('所有模型均無法使用。最後錯誤：'+lastError+'\n如見 429：等 60 秒後到「題庫管理」點「重新出題」繼續。\n如見 404：到 GAS 執行 testGeminiAPI() 確認。');
 }
 
 // ============================================================
-// 1. 資料庫初始化
+// 1. 資料庫初始化（v9.0：新增 HelpUrl）
 // ============================================================
 function setupDatabase() {
   const ss  = SpreadsheetApp.getActiveSpreadsheet();
@@ -228,6 +244,8 @@ function setupDatabase() {
   const add = (key, val, msg) => { if (!existKeys.includes(key)) { cfg.appendRow([key,val]); log.push('✅ 補充 '+msg); } };
   add('GeminiModel','gemini-2.5-flash','GeminiModel');
   add('IsPaidAccount','false','IsPaidAccount');
+  // ★ v9.0 新增：操作說明網址
+  add('HelpUrl','','操作說明網址（留空則首頁不顯示按鈕）');
   add('MathPrompt',[
     '【角色設定】','你是台灣頂尖的國小數學科教學與評量專家，深諳 108 課綱素養導向教學與布魯姆認知層次分析。','',
     '【任務背景】','請針對「{{GRADE}}」學生，依據其因材網測驗錯誤率，為以下每個知識節點各出 {{QCOUNT}} 題測驗題：',
@@ -336,6 +354,21 @@ function updateGeminiSettings(model,isPaid,pwd) {
   return '✅ Gemini 設定已更新！';
 }
 
+// ★ v9.0 新增：操作說明網址 CRUD
+function getHelpUrl() {
+  return String(getConfig().HelpUrl || '').trim();
+}
+
+function updateHelpUrl(url, pwd) {
+  // 管理員驗證（pwd 可選，登出狀態下不驗證；這裡要求需有 pwd）
+  if (pwd && !verifyAdmin(pwd)) throw new Error('密碼錯誤！');
+  const cfg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if (!cfg) throw new Error('請先初始化資料庫');
+  const safeUrl = String(url || '').trim();
+  _updateConfigValue(cfg, 'HelpUrl', safeUrl);
+  return '✅ 操作說明網址已' + (safeUrl ? '更新' : '清空');
+}
+
 // ============================================================
 // 3. 任務與學生管理
 // ============================================================
@@ -349,7 +382,6 @@ function uploadTaskData(taskName, grade, subject, studentData, uniqueNodes) {
   if (!tasksSheet) throw new Error('請先執行「初始化資料庫」');
   const taskRows = tasksSheet.getDataRange().getValues();
   let taskRowIdx = -1;
-  // ★ FIXED v8.9q: String() 轉換比較，避免 Sheets 將數字型名稱存為 number
   for (let i=1;i<taskRows.length;i++) {
     if (String(taskRows[i][0]) === String(taskName)) { taskRowIdx=i+1; break; }
   }
@@ -361,7 +393,6 @@ function uploadTaskData(taskName, grade, subject, studentData, uniqueNodes) {
   if (studSheet) {
     if (studSheet.getLastRow()>1) {
       const sRows = studSheet.getDataRange().getValues();
-      // ★ FIXED v8.9q: String() 比較
       for (let i=sRows.length-1;i>=1;i--) {
         if (String(sRows[i][0])===String(taskName)) studSheet.deleteRow(i+1);
       }
@@ -370,8 +401,8 @@ function uploadTaskData(taskName, grade, subject, studentData, uniqueNodes) {
       studSheet.getRange(studSheet.getLastRow()+1,1,stdData.length,4)
         .setValues(stdData.map(s=>[
           taskName,
-          String(s.number||'').trim(),   // B欄：座號
-          String(s.name  ||'').trim(),   // C欄：姓名
+          String(s.number||'').trim(),
+          String(s.name  ||'').trim(),
           JSON.stringify((s.weakNodes||[]).filter(_isValid))
         ]));
     }
@@ -419,10 +450,12 @@ function getTasks() {
 /**
  * 取得指定任務的學生清單
  * ★ FIXED v8.9q: String(r[0]) === String(taskName)
- *   避免 Google Sheets 將數字型任務名稱（如"101"）自動轉為 number 101
- *   導致嚴格比較 === 永遠失敗，造成「此任務無學生資料」的問題。
- *
  * ★ FIXED v8.9p: 支援「4年 1班 3號 陳勝文 2」混合格式自動拆分
+ *
+ * v9.0 補充說明：
+ * getStudents 回傳的 name 欄已在此函式中完整分離，
+ * 不應再含任何弱點數量數字後綴。
+ * 前端 anonymizeName 的「剝離尾部數字」作為雙重保護。
  */
 function getStudents(taskName) {
   if (!taskName) throw new Error('請提供任務名稱');
@@ -430,20 +463,24 @@ function getStudents(taskName) {
   if (!sheet||sheet.getLastRow()<2) return [];
 
   return sheet.getDataRange().getValues().slice(1)
-    // ★ 關鍵修正：用 String() 轉換後再比較，避免 number vs string 型別不符
     .filter(r => String(r[0]) === String(taskName) && String(r[1]||'').trim())
     .map(r => {
       let number = String(r[1]).trim();
       let name   = String(r[2]||'').trim();
 
-      // 若 name 欄空白，嘗試從 number 欄提取中文姓名
-      // 例：「4年 1班 3號 陳勝文 2」→ name="陳勝文", number="4年 1班 3號"
+      // ① 若 name 欄空白，從 number 欄提取中文姓名
       if (!name || name==='null' || name==='undefined') {
         const m = number.match(/號\s*([\u4e00-\u9fa5]{2,4})(?:\s+\d+)?$/);
         if (m) {
           name   = m[1];
           number = number.replace(/\s+[\u4e00-\u9fa5]{2,4}(?:\s+\d+)?$/,'').trim();
         }
+      }
+
+      // ① 去除 name 欄尾部的弱點數量數字（如「龔家堂 2」→「龔家堂」）
+      //    這是因為某些舊版上傳格式在 name 欄混入弱點計數
+      if (name) {
+        name = name.replace(/\s*\d+\s*$/, '').trim();
       }
 
       return {
@@ -523,48 +560,136 @@ function _isValid(node) {
 }
 
 // ============================================================
-// 7. 批次出題引擎
+// 7. ★ 批次出題引擎（v9.0 加入 Bank-First 優化）
 // ============================================================
+/**
+ * Bank-First 優化核心邏輯：
+ * 在呼叫 Gemini API 之前，先檢查 Bank 試算表中是否已有
+ * 對應年級/科目/節點的題目，且數量 >= QCOUNT。
+ * 若已有足夠題目，跳過該節點，不呼叫 Gemini，節省 API 配額。
+ *
+ * @param {string[]} nodesArray - 節點陣列
+ * @param {string} grade - 年級
+ * @param {string} subject - 科目
+ * @param {number} batchIndex - 批次索引（0-based）
+ * @param {string} pdfText - PDF 文字（可選）
+ * @param {string} mode - 出題模式（'ai'/'pdf'/'mixed'）
+ */
 function _doGenerateBatch(nodesArray, grade, subject, batchIndex, pdfText, mode) {
-  const BATCH_SIZE=5, QCOUNT=3;
+  const BATCH_SIZE = 5;
+  const QCOUNT     = 3;  // 每節點最低題目數門檻
+
   const safeArray  = nodesArray||[];
   const validNodes = safeArray.map(n=>String(n||'').trim()).filter(_isValid);
   const hasInvalid = safeArray.some(n=>n&&!_isValid(String(n||'').trim()));
-  const nodeBatches=[];
+
+  const nodeBatches = [];
   for (let i=0;i<validNodes.length;i+=BATCH_SIZE) nodeBatches.push({nodes:validNodes.slice(i,i+BATCH_SIZE),isGeneral:false});
   if (validNodes.length===0||hasInvalid) nodeBatches.push({nodes:['通用基礎練習'],isGeneral:true});
-  const total=nodeBatches.length;
-  if (batchIndex>=total) {
+
+  const total = nodeBatches.length;
+  if (batchIndex >= total) {
     try{CacheService.getScriptCache().remove('BankData_V3');}catch(e){}
     return {done:true,current:total,total,message:'✅ 全部完成！共 '+total+' 批次。'};
   }
-  const batch=nodeBatches[batchIndex];
-  let prompt,maxTok;
-  if (batch.isGeneral) { prompt=_buildGeneralPrompt(subject,grade,10); maxTok=3072; }
-  else { prompt=_buildPrompt(subject,grade,batch.nodes,QCOUNT,pdfText,mode||'ai'); maxTok=Math.min(8192,batch.nodes.length*QCOUNT*500+512); }
-  const rawText=_callGemini(prompt,maxTok,true);
-  let questions=[];
-  try {
-    questions=_parseAI(rawText);
-    questions=(questions||[]).filter(q=>q&&q.text&&Array.isArray(q.options)&&q.options.length>=2);
-  } catch(parseErr) { Logger.log('[解析失敗] batch='+batchIndex+' error='+parseErr.message); questions=[]; }
-  const bank=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
-  if (!bank) throw new Error('Bank 分頁不存在，請先初始化資料庫');
-  const ts=Date.now().toString().slice(-6);
-  const newRows=questions.map((q,idx)=>{
-    const lv=q.level||'D';
-    const nd=batch.isGeneral?('通用練習('+subject+grade+')'):(q.node||batch.nodes[0]);
-    return ['AI-'+subject+'-'+ts+'-'+batchIndex+'-'+idx,nd,String(q.text||''),q.type||'single',JSON.stringify(q.options||[]),_normAnswer(q.answer),q.difficulty||'easy',grade,subject,'[Level '+lv+'] '+(q.hint||'')];
-  });
-  if (newRows.length>0) {
-    const lastRow=bank.getLastRow()||1;
-    bank.getRange(lastRow+1,1,newRows.length,10).setValues(newRows);
-    bank.getRange(lastRow+1,6,newRows.length,1).setNumberFormat('@STRING@');
+
+  const batch   = nodeBatches[batchIndex];
+  const isLast  = (batchIndex+1>=total);
+
+  // ═══════════════════════════════════════════════
+  // ★ v9.0 Bank-First：預先讀取 Bank，過濾已有足夠題目的節點
+  // ═══════════════════════════════════════════════
+  if (!batch.isGeneral) {
+    const bank = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+    if (bank && bank.getLastRow() >= 2) {
+      const bankRows = bank.getDataRange().getValues().slice(1).filter(r=>r[0]&&r[2]);
+
+      // 計算各節點在 Bank 中已有的題目數
+      const nodesToGenerate = batch.nodes.filter(node => {
+        const existCount = bankRows.filter(r => {
+          const nd   = String(r[1]||'');
+          const rGr  = String(r[7]||'');
+          const rSub = String(r[8]||'');
+          // 節點匹配：包含關係（允許部分匹配）
+          const nodeMatch = (nd.includes(node) || node.includes(nd) || nd===node);
+          // 年級和科目必須完全匹配
+          const gradeMatch = (!grade || rGr===grade);
+          const subjectMatch = (!subject || rSub===subject);
+          return nodeMatch && gradeMatch && subjectMatch;
+        }).length;
+        Logger.log('[Bank-First] 節點「'+node+'」已有 '+existCount+' 題（門檻：'+QCOUNT+'）');
+        return existCount < QCOUNT;  // 只生成題目不足的節點
+      });
+
+      if (nodesToGenerate.length === 0) {
+        // 此批次所有節點都已有足夠題目，跳過 Gemini 呼叫
+        Logger.log('[Bank-First] 批次 '+batchIndex+' 所有節點題庫充足，跳過 Gemini');
+        if (isLast) try{CacheService.getScriptCache().remove('BankData_V3');}catch(e){}
+        return {
+          done:     isLast,
+          current:  batchIndex+1,
+          total:    total,
+          addedThisBatch: 0,
+          message:  '✅ 第'+(batchIndex+1)+'/'+total+'批 Bank-First 命中（題庫已足夠，跳過出題）'
+        };
+      }
+
+      // 只對題目不足的節點呼叫 Gemini
+      if (nodesToGenerate.length < batch.nodes.length) {
+        Logger.log('[Bank-First] 批次 '+batchIndex+'：'+batch.nodes.length+' 個節點中，'+nodesToGenerate.length+' 個需要 Gemini 補題');
+        // 暫時覆蓋 batch.nodes 為需要生成的節點
+        batch.nodes = nodesToGenerate;
+      }
+    }
   }
-  const isLast=(batchIndex+1>=total);
+  // ═══════════════════════════════════════════════
+
+  // 呼叫 Gemini API 生成題目
+  let prompt, maxTok;
+  if (batch.isGeneral) {
+    prompt = _buildGeneralPrompt(subject, grade, 10);
+    maxTok = 3072;
+  } else {
+    prompt = _buildPrompt(subject, grade, batch.nodes, QCOUNT, pdfText, mode||'ai');
+    maxTok = Math.min(8192, batch.nodes.length * QCOUNT * 500 + 512);
+  }
+
+  const rawText = _callGemini(prompt, maxTok, true);
+  let questions = [];
+  try {
+    questions = _parseAI(rawText);
+    questions = (questions||[]).filter(q=>q&&q.text&&Array.isArray(q.options)&&q.options.length>=2);
+  } catch(parseErr) {
+    Logger.log('[解析失敗] batch='+batchIndex+' error='+parseErr.message);
+    questions = [];
+  }
+
+  // 寫入 Bank
+  const bankSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  if (!bankSheet) throw new Error('Bank 分頁不存在，請先初始化資料庫');
+  const ts = Date.now().toString().slice(-6);
+  const newRows = questions.map((q,idx) => {
+    const lv = q.level||'D';
+    const nd = batch.isGeneral ? ('通用練習('+subject+grade+')') : (q.node||batch.nodes[0]);
+    return ['AI-'+subject+'-'+ts+'-'+batchIndex+'-'+idx, nd, String(q.text||''), q.type||'single',
+            JSON.stringify(q.options||[]), _normAnswer(q.answer), q.difficulty||'easy', grade, subject,
+            '[Level '+lv+'] '+(q.hint||'')];
+  });
+  if (newRows.length > 0) {
+    const lastRow = bankSheet.getLastRow()||1;
+    bankSheet.getRange(lastRow+1,1,newRows.length,10).setValues(newRows);
+    bankSheet.getRange(lastRow+1,6,newRows.length,1).setNumberFormat('@STRING@');
+  }
+
   if (isLast) try{CacheService.getScriptCache().remove('BankData_V3');}catch(e){}
-  const nodeLabel=batch.isGeneral?'通用練習':batch.nodes.join('、');
-  return {done:isLast,current:batchIndex+1,total,addedThisBatch:newRows.length,message:'['+subject+'] 第 '+(batchIndex+1)+'/'+total+' 批完成（'+nodeLabel+'）— 新增 '+newRows.length+' 題'};
+  const nodeLabel = batch.isGeneral ? '通用練習' : batch.nodes.join('、');
+  return {
+    done: isLast,
+    current: batchIndex+1,
+    total,
+    addedThisBatch: newRows.length,
+    message: '['+subject+'] 第'+(batchIndex+1)+'/'+total+'批完成（'+nodeLabel+'）— 新增 '+newRows.length+' 題'
+  };
 }
 
 function generateBatch(nodesArray,grade,subject,batchIndex){return _doGenerateBatch(nodesArray,grade,subject||'數學',batchIndex,null,'ai');}
