@@ -500,6 +500,9 @@ const API = {
   getTaskQuestions:(n)=>API._call('getTaskQuestions',{taskName:n}),
   getHelpUrl:()=>API._call('getHelpUrl'),
   updateHelpUrl:(url,pwd)=>API._call('updateHelpUrl',{url,pwd}),
+  // ★ v9.1 新增：差異化講義雲端儲存
+  saveWorksheetToCloud:(n,g,s,h)=>API._call('saveWorksheetToCloud',{taskName:n,grade:g,subject:s,htmlContent:h}),
+  getWorksheetFromCloud:(n,g,s)=>API._call('getWorksheetFromCloud',{taskName:n,grade:g,subject:s}),
 };
 
 function showView(name){
@@ -871,21 +874,19 @@ async function previewStudentList(taskName){
 async function previewBankQuestions(taskName){
   Swal.fire({title:'載入題目預覽…',allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
-    const res = await API.getTaskQuestions(taskName); 
+    // ★ v9.1 修正：改回 v9.0 的 generateQuiz(null, taskName)
+    // 原因：generateQuiz 使用 Bank 快取、回傳完整 level 欄位，比 getTaskQuestions 更穩定
+    const sample = await API.generateQuiz(null, taskName);
     Swal.close();
-    const qs = res.questions;
-    if(!qs||!qs.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
-    
-    // 將所有題目渲染成 HTML 並加入滾動條框架
-    const previewHtml = `<div style="max-height:60vh; overflow-y:auto; padding-right:8px;">` + 
-      qs.map((q,i)=>{
-        const lvColor={'A':'badge-A','B':'badge-B','C':'badge-C','D':'badge-D'},lv=q.level||'D';
+    if(!sample||!sample.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
+    const previewHtml = `<div style="max-height:60vh; overflow-y:auto; padding-right:8px;">` +
+      sample.slice(0,8).map((q,i)=>{
+        const lvColor={'A':'badge-A','B':'badge-B','C':'badge-C','D':'badge-D'}, lv=q.level||'D';
         const opts=(q.options||[]).map((o,j)=>{const isCorrect='ABCD'[j]===q.answer;return `<div class="py-1 d-flex align-items-start gap-1"><span class="badge ${isCorrect?'bg-success':'bg-light text-dark border'}">${'ABCD'[j]}</span><span class="small">${esc(o)}</span></div>`;}).join('');
         const hint=q.hint?q.hint.replace(/^\[Level [ABCD]\]\s*/,''):'';
-        return `<div class="border rounded p-3 mb-3 text-start"><div class="d-flex justify-content-between align-items-start mb-1"><span class="small fw-bold text-muted">【${esc(q.node)}】 (第 ${i+1} 題)</span><span class="badge ${lvColor[lv]||'bg-secondary'} ms-2 flex-shrink-0">Level ${lv}</span></div><div class="mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.7">${esc(q.text)}</div>${q.type==='single'?opts:''}<div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>${hint?`<div class="small text-secondary mt-1">💡 ${esc(hint)}</div>`:''}</div>`;
+        return `<div class="border rounded p-3 mb-2 text-start"><div class="d-flex justify-content-between align-items-start mb-1"><span class="small fw-bold text-muted">【${esc(q.node)}】（第${i+1}題）</span><span class="badge ${lvColor[lv]||'bg-secondary'} ms-2 flex-shrink-0">Level ${lv}</span></div><div class="mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.7">${esc(q.text)}</div>${q.type==='single'?opts:''}<div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>${hint?`<div class="small text-secondary mt-1">💡 ${esc(hint)}</div>`:''}</div>`;
       }).join('') + `</div>`;
-      
-    Swal.fire({title:`「${taskName}」題庫預覽（共 ${qs.length} 題）`,html:previewHtml,confirmButtonText:'關閉',width:'740px',customClass:{htmlContainer:'text-start px-2'}});
+    Swal.fire({title:`「${taskName}」題庫預覽（前8題）`,html:previewHtml,confirmButtonText:'關閉',width:'740px',customClass:{htmlContainer:'text-start px-2'}});
   }catch(e){Swal.close();Swal.fire({icon:'error',title:'預覽失敗',text:e.message});}
 }
 
@@ -1006,7 +1007,29 @@ async function loadAnalysis(){
     wsArea.dataset.grade=task?.grade||'';
     wsArea.dataset.subject=task?.subject||'';
     wsArea.dataset.nodes=JSON.stringify(nodes.slice(0,3).map(n=>n.node));
+    // ★ v9.1 新增：傳遞 taskname，genWorksheet 需要它來儲存雲端
+    wsArea.dataset.taskname=taskName;
     _resetWorksheetArea();
+
+    // ★ v9.1 新增：自動嘗試從雲端讀取已存講義，若有則直接顯示（免重新生成）
+    try{
+      const stored = await API._call('getWorksheetFromCloud',{taskName, grade:task?.grade||'', subject:task?.subject||''});
+      if(stored && stored.htmlContent){
+        app.wsHtml = _sanitizeWsHtml(stored.htmlContent);
+        document.getElementById('ws-state-idle').style.display='none';
+        document.getElementById('ws-state-done').style.display='';
+        document.getElementById('ws-toggle-btn').innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
+        // 顯示已有雲端講義提示
+        const wsCard = wsArea.querySelector('.ws-mgmt-card');
+        if(wsCard && !wsCard.querySelector('.ws-cloud-badge')){
+          const badge = document.createElement('span');
+          badge.className='ws-cloud-badge badge bg-info text-dark ms-2 small';
+          badge.innerHTML='<i class="fa-solid fa-cloud me-1"></i>已載入雲端版本';
+          wsCard.querySelector('h6').appendChild(badge);
+        }
+      }
+    }catch(cloudErr){ /* 找不到雲端講義屬正常，使用者需手動生成 */ }
+
   }catch(e){area.innerHTML=`<p class="text-danger">分析失敗：${e.message}</p>`;}
 }
 
@@ -1048,6 +1071,7 @@ function toggleWsPreview(){
 async function genWorksheet(){
   const ws=document.getElementById('worksheet-area');
   const topNodes=JSON.parse(ws.dataset.nodes||'[]'),grade=ws.dataset.grade,subject=ws.dataset.subject;
+  const taskName=ws.dataset.taskname||'';
   if(!topNodes.length) return Swal.fire({icon:'warning',title:'無弱點節點資料'});
 
   document.getElementById('ws-state-idle').style.display='none';
@@ -1062,89 +1086,132 @@ async function genWorksheet(){
   const tick=setInterval(()=>{progBar.style.width=Math.min(90,10+Math.round((Date.now()-_waitStart)/1000)*1.5)+'%';},2000);
 
   try{
-    // ★ 修正：後端 generateTeachingWorksheet 回傳的是 HTML 字串，不是 JSON 陣列
-    // 舊版（v9.1 錯誤）把回傳值當 JSON Array 呼叫 .forEach() → "jsonArray.forEach is not a function"
-    // 正確做法：直接當 HTML 字串使用（與 v9.0 一致）
-    const htmlContent = await API.generateTeachingWorksheet(topNodes,grade,subject);
-    clearInterval(rot);clearInterval(tick);
-    progBar.style.width='100%';progMsg.textContent='✅ 學習單生成完成！';
+    // ★ v9.1 修正：後端 generateTeachingWorksheet 回傳 HTML 字串，直接使用
+    // 舊版 v9.1 錯誤地把回傳值當 JSON Array 呼叫 .forEach() → "jsonArray.forEach is not a function"
+    const htmlContent = await API.generateTeachingWorksheet(topNodes, grade, subject);
+    clearInterval(rot); clearInterval(tick);
+    progBar.style.width='100%'; progMsg.textContent='✅ 學習單生成完成！';
 
-    // 清理並補全 HTML（移除 markdown fence、補齊 html/head/body 結構）
     app.wsHtml = _sanitizeWsHtml(htmlContent);
+
+    // ★ v9.1 新增：自動儲存講義到 Google Drive（非同步，不阻擋 UI）
+    if(taskName){
+      API._call('saveWorksheetToCloud',{taskName,grade,subject,htmlContent:app.wsHtml})
+        .then(r=>{ if(r&&r.fileId) console.log('[Worksheet] 已儲存至雲端：'+r.fileName); })
+        .catch(e=>console.warn('[Worksheet] 雲端儲存失敗（不影響預覽）：'+e.message));
+    }
 
     document.getElementById('ws-state-done').style.display='';
     document.getElementById('ws-toggle-btn').innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
     setTimeout(()=>{document.getElementById('ws-gen-progress').style.display='none';},1800);
-    Swal.fire({icon:'success',title:'學習單已生成！',text:'請點「展開預覽」查看或選擇教師版/學生版列印。',timer:2500,showConfirmButton:false});
+    Swal.fire({icon:'success',title:'學習單已生成！',text:'請點「展開預覽」查看，或選擇教師版/學生版列印。',timer:2500,showConfirmButton:false});
 
   }catch(e){
-    clearInterval(rot);clearInterval(tick);
+    clearInterval(rot); clearInterval(tick);
     document.getElementById('ws-gen-progress').style.display='none';
     document.getElementById('ws-state-idle').style.display='';
     Swal.fire({icon:'error',title:'生成失敗',text:e.message,footer:'若為 API 配額問題，請等 60 秒後重試'});
   }
 }
 
-function _sanitizeWsHtml(raw){
-  // ★ 先移除 AI 可能夾帶的 markdown code fence（```html ... ```）
-  let html=String(raw||'').replace(/^```html\s*/i,'').replace(/```\s*$/,'').trim();
-  // 補齊完整 HTML 結構（若 AI 只回傳 body 內容）
-  if(!html.includes('<html')){
-    html=`<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <style>
-      body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}
-      h1,h2,h3{color:#1e88e5;}table{border-collapse:collapse;width:100%;}
-      td,th{border:1px solid #ccc;padding:6px 10px;}
-      .answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
-    </style></head><body>${html}</body></html>`;
+function _sanitizeWsHtml(html){
+  // ★ v9.1 修正：移除 markdown fence、確保 UTF-8、補齊完整 HTML 結構
+  let s = String(html||'').replace(/^```html\s*/i,'').replace(/^```\s*/i,'').replace(/```\s*$/,'').trim();
+  if(!s) return '<html><head><meta charset="UTF-8"></head><body><p>（無內容）</p></body></html>';
+  // 確保有 charset（防中文亂碼）
+  if(s.includes('<head>') && !s.match(/charset/i)){
+    s = s.replace('<head>','<head><meta charset="UTF-8">');
   }
-  return html;
+  // 若只是 body 片段，補齊完整結構
+  if(!s.includes('<html')){
+    s = `<!DOCTYPE html><html lang="zh-TW"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:210mm;margin:0 auto;padding:20px;font-size:14px;line-height:1.8;}
+  h1,h2,h3{color:#1e88e5;}
+  table{border-collapse:collapse;width:100%;}
+  td,th{border:1px solid #ccc;padding:6px 10px;}
+  .c-level{border:2px solid #1565c0;padding:10px;margin:10px 0;}
+  .b-level{border:2px solid #f57c00;padding:10px;margin:10px 0;}
+  .a-level{border:2px solid #d32f2f;padding:10px;margin:10px 0;}
+  .answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}
+  .student-space{height:60px;border-bottom:1px solid #aaa;margin:10px 0;}
+</style></head><body>${s}</body></html>`;
+  }
+  return s;
 }
 
 function _writeToIframe(frame, html){
   if(!frame||!html) return;
-  if(frame._blobUrl){ URL.revokeObjectURL(frame._blobUrl); frame._blobUrl=null; }
+  // ★ v9.1 修正：srcdoc 優先（GitHub Pages CSP 環境下 Blob URL 會被阻擋導致空白）
+  // 策略：srcdoc → Blob URL → document.write
+  if(frame._blobUrl){ try{URL.revokeObjectURL(frame._blobUrl);}catch(e){} frame._blobUrl=null; }
+  // 優先用 srcdoc（同源、不受 CSP 限制、中文不亂碼）
   try{
-    const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-    const url=URL.createObjectURL(blob);
-    frame._blobUrl=url;
-    frame.src=url;
+    if('srcdoc' in frame){
+      frame.srcdoc = html;
+      return;
+    }
+  }catch(e1){ console.warn('[srcdoc failed]',e1); }
+  // 備援：Blob URL
+  try{
+    const blob = new Blob([html],{type:'text/html;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    frame._blobUrl = url;
+    frame.src = url;
     return;
-  }catch(e1){ console.warn('[Blob URL failed]',e1); }
-  try{ if('srcdoc' in frame){ frame.srcdoc=html; return; } }catch(e2){}
+  }catch(e2){ console.warn('[Blob URL failed]',e2); }
+  // 最後備援：document.write
   try{
-    const doc=frame.contentDocument||frame.contentWindow?.document;
-    if(doc){doc.open('text/html','replace');doc.write(html);doc.close();}
-  }catch(e3){}
+    const doc = frame.contentDocument || frame.contentWindow?.document;
+    if(doc){ doc.open('text/html','replace'); doc.write(html); doc.close(); }
+  }catch(e3){ console.warn('[document.write failed]',e3); }
 }
 
 /* ★ 修正 2 列印樣式：老師版隱藏空格，學生版隱藏答案 */
 function printWorksheet(mode){
   if(!app.wsHtml){Swal.fire({icon:'warning',title:'請先生成講義'});return;}
-  let html=app.wsHtml;
-  const bodyClass=(mode==='student')?'print-student':'print-teacher';
+  let html = app.wsHtml;
+  const bodyClass = (mode==='student') ? 'print-student' : 'print-teacher';
+
+  // ★ v9.1 修正：確保有 UTF-8 charset（防止列印時中文亂碼）
+  if(!html.match(/charset/i)){
+    html = html.includes('<head>') ? html.replace('<head>','<head><meta charset="UTF-8">') : html;
+  }
+
+  // 注入 body class（控制教師版/學生版的列印顯隱）
   if(html.includes('<body')){
-    html=html.replace(/<body([^>]*)>/i,(m,attrs)=>{
-      if(/class=/i.test(attrs))return m.replace(/class="([^"]*)"/i,`class="$1 ${bodyClass}"`);
+    html = html.replace(/<body([^>]*)>/i,(m,attrs)=>{
+      if(/class=/i.test(attrs)) return m.replace(/class="([^"]*)"/i,`class="$1 ${bodyClass}"`);
       return `<body${attrs} class="${bodyClass}">`;
     });
-  }else{html=`<body class="${bodyClass}">`+html+'</body>';}
-  const printCSS=`<style>
+  } else { html = `<body class="${bodyClass}">` + html + '</body>'; }
+
+  // ★ 注入列印樣式：教師版隱藏學生作答空格，學生版隱藏答案
+  const printCSS = `<style>
     @media print{
-      body.print-student .answer-section { display: none !important; }
-      body.print-teacher .student-space { display: none !important; }
-      .ws-question { page-break-inside: avoid; break-inside: avoid; }
-      h4 { page-break-after: avoid; break-after: avoid; }
-      *{-webkit-print-color-adjust:exact;color-adjust:exact;}
+      body.print-student .answer-section { display:none !important; }
+      body.print-teacher .student-space  { display:none !important; }
+      .ws-question { page-break-inside:avoid; break-inside:avoid; }
+      h1,h2,h3,h4 { page-break-after:avoid; break-after:avoid; }
+      *{ -webkit-print-color-adjust:exact; color-adjust:exact; }
     }
   </style>`;
-  html=html.includes('</head>')?html.replace('</head>',printCSS+'</head>'):printCSS+html;
-  const printScript=`<script>(function(){function go(){try{window.focus();window.print();}catch(e){}}if(document.readyState==='complete')setTimeout(go,400);else window.addEventListener('load',function(){setTimeout(go,400);},{once:true});})();<\/script>`;
-  html=html.includes('</body>')?html.replace('</body>',printScript+'</body>'):html+printScript;
-  let frame=document.getElementById('hidden-print-frame');
-  if(!frame){frame=document.createElement('iframe');frame.id='hidden-print-frame';frame.style.cssText='position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;pointer-events:none;visibility:hidden;';document.body.appendChild(frame);}
-  _writeToIframe(frame,html);
+  html = html.includes('</head>') ? html.replace('</head>',printCSS+'</head>') : printCSS+html;
+
+  // 注入列印觸發腳本
+  const printScript = `<script>(function(){function go(){try{window.focus();window.print();}catch(e){}}if(document.readyState==='complete')setTimeout(go,400);else window.addEventListener('load',function(){setTimeout(go,400);},{once:true});})();<\/script>`;
+  html = html.includes('</body>') ? html.replace('</body>',printScript+'</body>') : html+printScript;
+
+  let frame = document.getElementById('hidden-print-frame');
+  if(!frame){
+    frame = document.createElement('iframe');
+    frame.id = 'hidden-print-frame';
+    frame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;pointer-events:none;visibility:hidden;';
+    document.body.appendChild(frame);
+  }
+  _writeToIframe(frame, html);
 }
 
 async function loadSettingsTab(){
