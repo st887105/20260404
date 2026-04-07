@@ -558,9 +558,11 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initPracticeMode(taskName) {
+  // ★ 修正2：先確認身份（學生或老師示範）
   const { value: stuName } = await Swal.fire({
     title: `🏆 進入補救練習`,
-    html: `目前任務：<b>${esc(taskName)}</b>`,
+    html: `目前任務：<b>${esc(taskName)}</b><br>
+           <span class="text-muted small">（老師可輸入「老師示範」進行試看）</span>`,
     input: 'text',
     inputPlaceholder: '請輸入您的姓名',
     allowOutsideClick: false,
@@ -568,19 +570,47 @@ async function initPracticeMode(taskName) {
   });
   if (!stuName) return;
 
-  Swal.fire({title:'載入錯題庫中…', allowOutsideClick:false, didOpen:()=>Swal.showLoading()});
+  const loadStart = Date.now();
+  // ★ 修正2：載入文字改為「錯誤類似題載入中」，並顯示載入時間
+  Swal.fire({
+    title:'錯誤類似題載入中…',
+    html:'<div id="practice-load-timer" class="text-muted small mt-1">已等待 0 秒</div>',
+    allowOutsideClick:false,
+    didOpen:()=>{
+      Swal.showLoading();
+      const timerEl = document.getElementById('practice-load-timer');
+      window._practiceLoadTimer = setInterval(()=>{
+        const s = Math.round((Date.now()-loadStart)/1000);
+        if(timerEl) timerEl.textContent = `已等待 ${s} 秒`;
+      }, 1000);
+    }
+  });
   try {
     const data = await API.getPracticeQuestionsForErrors(taskName);
+    clearInterval(window._practiceLoadTimer);
+    const elapsed = Math.round((Date.now()-loadStart)/1000);
     Swal.close();
-    if (!data || !data.length) return Swal.fire('錯誤', '此任務無足夠錯題資料', 'error');
+    if (!data || !data.length) return Swal.fire('提示', '此任務尚無足夠錯題資料，請先讓學生完成測驗後再使用補救練習。', 'info');
 
     const allQs = data.flatMap(d => d.questions.map(q => ({...q, node: d.node})));
-    if (!allQs.length) return Swal.fire('錯誤', '無錯題', 'error');
+    if (!allQs.length) return Swal.fire('提示', '此任務目前無足夠錯題。', 'info');
+
+    // ★ 修正2：老師示範模式提示
+    const isTeacher = stuName.includes('老師') || stuName.includes('示範') || stuName.includes('teacher');
+    if(isTeacher){
+      await Swal.fire({
+        icon:'info',
+        title:'老師示範模式',
+        html:`共載入 <b>${allQs.length}</b> 題錯誤類似題<br>載入耗時：<b>${elapsed} 秒</b><br><span class="text-muted small">本次作答成績不計入學生紀錄</span>`,
+        confirmButtonText:'開始示範'
+      });
+    }
 
     app.currentTask = { taskName: taskName + '_補救練習' };
-    app.currentStudent = { name: stuName, number: '特別練習' };
+    app.currentStudent = { name: stuName, number: isTeacher ? '教師示範' : '補救練習' };
     startQuiz(allQs);
   } catch(e) {
+    clearInterval(window._practiceLoadTimer);
     Swal.fire('錯誤', e.message, 'error');
   }
 }
@@ -981,52 +1011,141 @@ async function loadResults(){
       <tr id="detail-row-${ri}" class="result-detail-row" style="display:none;"><td colspan="6" class="p-0"><div class="p-2">${(r.details||[]).map((d,di)=>`<div class="d-flex align-items-start gap-2 p-2 rounded mb-1 ${d.correct?'bg-light':'bg-danger bg-opacity-10'}"><span>${d.correct?'✅':'❌'}</span><div class="small flex-grow-1"><div class="fw-bold">第${di+1}題【${esc(d.node||'—')}】Level ${d.level||'?'}</div><div class="text-muted" style="white-space:pre-wrap;word-break:break-word;">${esc(d.text||'—')}</div><div>作答：<b>${esc(d.selected||'—')}</b>　正解：<b class="text-success">${esc(d.answer||'—')}</b></div></div></div>`).join('')}</div></td></tr>`;
     });
     html+='</tbody></table></div>';
-    html+=`<div class="mt-3"><button class="btn btn-outline-warning btn-sm" onclick="genSimilarPractice('${taskName.replace(/'/g,"\\'")}')"><i class="fa-solid fa-dumbbell me-1"></i>生成錯誤率前3高的類似題</button><div id="similar-practice-area" class="mt-3"></div></div>`;
+    // ★ 修正2：加上老師示範題連結區塊
+    const demoUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
+    html+=`<div class="mt-3 p-3 border rounded bg-light">
+      <div class="fw-bold small mb-2"><i class="fa-solid fa-chalkboard-teacher text-primary me-1"></i>老師工具列</div>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <button class="btn btn-outline-warning btn-sm" onclick="genSimilarPractice('${taskName.replace(/'/g,"\\'")}')">
+          <i class="fa-solid fa-dumbbell me-1"></i>生成錯誤類似題
+        </button>
+        <a href="${demoUrl}" target="_blank" class="btn btn-outline-primary btn-sm">
+          <i class="fa-solid fa-user-tie me-1"></i>老師示範題連結
+        </a>
+        <button class="btn btn-outline-secondary btn-sm" onclick="copyText('${demoUrl}')">
+          <i class="fa-solid fa-copy me-1"></i>複製補救練習連結
+        </button>
+      </div>
+    </div>
+    <div id="similar-practice-area" class="mt-3"></div>`;
     area.innerHTML=html;
   }catch(e){area.innerHTML=`<p class="text-danger">載入失敗：${e.message}</p>`;}
 }
 
-async function genSimilarPractice(taskName){
+// ★ 修正1：類似題生成後可直接預覽（仿差異化），並提供重新生成按鈕
+// 生成結果存在 app._simData，切換預覽不需重新呼叫 API
+const app_sim = { data: null, taskName: '', previewOpen: false };
+
+async function genSimilarPractice(taskName, forceRegen){
   const area=document.getElementById('similar-practice-area');if(!area)return;
+
+  // 若已有資料且非強制重新生成，直接顯示結果
+  if(!forceRegen && app_sim.data && app_sim.taskName===taskName){
+    _renderSimResult(area, app_sim.data, taskName);
+    return;
+  }
+
+  const genStart = Date.now();
   area.innerHTML=`
     <div id="sim-prog-area" class="mt-2">
-      <div class="d-flex justify-content-between small text-muted mb-1"><span id="sim-prog-msg">準備中…</span></div>
+      <div class="d-flex justify-content-between small text-muted mb-1">
+        <span id="sim-prog-msg">載入錯誤類似題中…</span>
+        <span id="sim-prog-timer">0 秒</span>
+      </div>
       <div class="progress mb-2"><div id="sim-prog-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width:0%"></div></div>
     </div>`;
   const pMsg = document.getElementById('sim-prog-msg');
+  const pTimer = document.getElementById('sim-prog-timer');
   const bar = document.getElementById('sim-prog-bar');
 
   startProgress(pMsg);
   let pct = 0;
   const tick = setInterval(() => { pct = Math.min(pct + 5, 90); bar.style.width = pct + '%'; }, 800);
+  // 顯示載入秒數
+  const timerTick = setInterval(()=>{
+    const s = Math.round((Date.now()-genStart)/1000);
+    if(pTimer) pTimer.textContent = `已等待 ${s} 秒`;
+  }, 1000);
 
   try{
     const data=await API.getPracticeQuestionsForErrors(taskName);
-    clearInterval(tick); stopProgress();
+    clearInterval(tick); clearInterval(timerTick); stopProgress();
 
     if(!data||!data.length){area.innerHTML='<div class="alert alert-info small py-2">此任務尚無足夠錯題資料。</div>';return;}
 
-    const shareUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
+    // 存入快取
+    app_sim.data = data;
+    app_sim.taskName = taskName;
+    app_sim.previewOpen = false;
 
-    let html=`
-      <div class="alert alert-success mt-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <div><strong>🔗 學生補救練習專屬連結已生成：</strong><br><a href="${shareUrl}" target="_blank" class="small">${shareUrl}</a></div>
-        <button class="btn btn-sm btn-success" onclick="navigator.clipboard.writeText('${shareUrl}').then(()=>Swal.fire({title:'已複製連結',timer:1000,showConfirmButton:false}))"><i class="fa-solid fa-copy me-1"></i>複製</button>
-      </div>
-      <h6 class="fw-bold mb-3 mt-4"><i class="fa-solid fa-dumbbell text-warning me-1"></i>錯誤率前3高類似題預覽</h6>`;
-
-    data.forEach(item=>{
-      html+=`<div class="card mb-3 border-warning"><div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center"><span class="fw-bold small">【${esc(item.node)}】</span><span class="badge bg-danger">${item.errorCount} 位學生答錯</span></div><div class="card-body p-2">`;
-      (item.questions||[]).forEach((q,qi)=>{
-        const lvBg={'A':'#d32f2f','B':'#f57c00','C':'#388e3c','D':'#1565c0'},lv=(q.hint?.match(/Level ([ABCD])/)?.[1])||'D';
-        html+=`<div class="border rounded p-2 mb-2"><div class="d-flex justify-content-between align-items-start mb-1"><span class="small text-muted fw-bold">類似題 ${qi+1}</span><span class="badge text-white" style="background:${lvBg[lv]||'#9e9e9e'}">Level ${lv}</span></div><div class="small mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.6">${esc(q.text)}</div>${q.type==='single'?(q.options||[]).map((o,oi)=>{const isAns='ABCD'[oi]===q.answer;return `<div class="d-flex align-items-start gap-1 py-1 border-bottom"><span class="badge ${isAns?'bg-success':'bg-light text-dark border'} flex-shrink-0">${'ABCD'[oi]}</span><span class="small">${esc(o)}</span></div>`;}).join(''):''}<div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>${q.hint?`<div class="small text-secondary mt-1">💡 ${esc(q.hint.replace(/^\[Level [ABCD]\]\s*/,''))}</div>`:''}</div>`;
-      });
-      html+=`</div></div>`;
-    });
-    area.innerHTML=html;
+    _renderSimResult(area, data, taskName);
   }catch(e){
-    clearInterval(tick); stopProgress();
+    clearInterval(tick); clearInterval(timerTick); stopProgress();
     area.innerHTML=`<div class="alert alert-danger small py-2">生成失敗：${e.message}</div>`;
+  }
+}
+
+function _renderSimResult(area, data, taskName){
+  const shareUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
+
+  // 建立類似題 HTML（預覽用）
+  let previewHtml = '';
+  data.forEach(item=>{
+    previewHtml+=`<div class="card mb-3 border-warning">
+      <div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center">
+        <span class="fw-bold small">【${esc(item.node)}】</span>
+        <span class="badge bg-danger">${item.errorCount} 位學生答錯</span>
+      </div>
+      <div class="card-body p-2">`;
+    (item.questions||[]).forEach((q,qi)=>{
+      const lvBg={'A':'#d32f2f','B':'#f57c00','C':'#388e3c','D':'#1565c0'},lv=(q.hint?.match(/Level ([ABCD])/)?.[1])||'D';
+      previewHtml+=`<div class="border rounded p-2 mb-2">
+        <div class="d-flex justify-content-between align-items-start mb-1">
+          <span class="small text-muted fw-bold">類似題 ${qi+1}</span>
+          <span class="badge text-white" style="background:${lvBg[lv]||'#9e9e9e'}">Level ${lv}</span>
+        </div>
+        <div class="small mb-2" style="white-space:pre-wrap;word-break:break-word;line-height:1.6">${esc(q.text)}</div>
+        ${q.type==='single'?(q.options||[]).map((o,oi)=>{const isAns='ABCD'[oi]===q.answer;return `<div class="d-flex align-items-start gap-1 py-1 border-bottom"><span class="badge ${isAns?'bg-success':'bg-light text-dark border'} flex-shrink-0">${'ABCD'[oi]}</span><span class="small">${esc(o)}</span></div>`;}).join(''):''}
+        <div class="small text-success mt-2 fw-bold">✅ 正解：${esc(q.answer)}</div>
+        ${q.hint?`<div class="small text-secondary mt-1">💡 ${esc(q.hint.replace(/^\[Level [ABCD]\]\s*/,''))}</div>`:''}
+      </div>`;
+    });
+    previewHtml+=`</div></div>`;
+  });
+
+  const escapedTask = taskName.replace(/'/g,"\\'");
+  area.innerHTML=`
+    <div class="alert alert-success mt-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div><strong>🔗 學生補救練習專屬連結：</strong><br><a href="${shareUrl}" target="_blank" class="small">${shareUrl}</a></div>
+      <button class="btn btn-sm btn-success" onclick="navigator.clipboard.writeText('${shareUrl}').then(()=>Swal.fire({title:'已複製連結',timer:1000,showConfirmButton:false}))"><i class="fa-solid fa-copy me-1"></i>複製</button>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center mb-2 mt-3">
+      <h6 class="fw-bold mb-0"><i class="fa-solid fa-dumbbell text-warning me-1"></i>錯誤類似題（共 ${data.length} 個節點）</h6>
+      <button class="btn btn-outline-secondary btn-sm" id="sim-toggle-btn" onclick="toggleSimPreview()">
+        <i class="fa-solid fa-eye me-1"></i>展開預覽
+      </button>
+      <button class="btn btn-outline-warning btn-sm" onclick="genSimilarPractice('${escapedTask}', true)">
+        <i class="fa-solid fa-rotate me-1"></i>重新生成
+      </button>
+    </div>
+    <div id="sim-preview-area" style="display:none;">
+      <div class="border rounded p-3 bg-white">${previewHtml}</div>
+    </div>`;
+
+  app_sim.previewOpen = false;
+}
+
+function toggleSimPreview(){
+  const area = document.getElementById('sim-preview-area');
+  const btn  = document.getElementById('sim-toggle-btn');
+  if(!area||!btn) return;
+  app_sim.previewOpen = !app_sim.previewOpen;
+  if(app_sim.previewOpen){
+    area.style.display='';
+    btn.innerHTML='<i class="fa-solid fa-eye-slash me-1"></i>收起預覽';
+  } else {
+    area.style.display='none';
+    btn.innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
   }
 }
 
@@ -1197,7 +1316,12 @@ function _sanitizeWsHtml(raw){
       + '  .a-box,.a-level{border:2px solid #d32f2f;padding:10px;margin:10px 0;border-radius:6px;}\n'
       + '  .answer-key,.answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}\n'
       + '  .student-space{height:60px;border-bottom:1px solid #aaa;margin:10px 0;}\n'
-      + '  .section{margin-bottom:20px;}\n'
+      + '  .section{margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;}\n'
+      + '  /* ★ 防跨頁：所有題目區塊不斷頁 */\n'
+      + '  .c-box,.c-level,.b-box,.b-level,.a-box,.a-level,.section,table,\n'
+      + '  [class*="question"],[class*="題目"],[class*="練習"]{page-break-inside:avoid;break-inside:avoid;}\n'
+      + '  h1,h2,h3,h4,h5{page-break-after:avoid;break-after:avoid;}\n'
+      + '  @page{margin:12mm 15mm;}\n'
       + '</style></head><body>' + s + '</body></html>';
   }
   return s;
@@ -1235,13 +1359,47 @@ function printWorksheet(mode){
       return `<body${attrs} class="${bodyClass}">`;
     });
   } else { html = `<body class="${bodyClass}">` + html + '</body>'; }
+
+  // ★ 修正3：強化防跨頁 CSS，學生版完整隱藏解答區塊
   const printCSS = `<style>
     @media print{
-      body.print-student .answer-section { display:none !important; }
-      body.print-teacher .student-space  { display:none !important; }
-      .ws-question { page-break-inside:avoid; break-inside:avoid; }
-      h1,h2,h3,h4 { page-break-after:avoid; break-after:avoid; }
-      *{ -webkit-print-color-adjust:exact; color-adjust:exact; }
+      /* 學生版：隱藏所有解答相關區塊 */
+      body.print-student .answer-section,
+      body.print-student .answer-key,
+      body.print-student [class*="answer"],
+      body.print-student [id*="answer"],
+      body.print-student [class*="解答"],
+      body.print-student [id*="解答"],
+      body.print-student [class*="參考答案"],
+      body.print-student .teacher-only { display:none !important; }
+      /* 教師版：隱藏學生作答空間 */
+      body.print-teacher .student-space { display:none !important; }
+
+      /* 防跨頁：所有主要區塊不斷頁 */
+      .ws-question,
+      .section,
+      .c-box,.c-level,
+      .b-box,.b-level,
+      .a-box,.a-level,
+      .card, .border, .border-rounded,
+      table { page-break-inside:avoid !important; break-inside:avoid !important; }
+
+      /* 標題前不斷頁 */
+      h1,h2,h3,h4,h5,h6 { page-break-after:avoid !important; break-after:avoid !important; }
+
+      /* 區塊間距調小，減少浪費空間 */
+      body { font-size:13px !important; line-height:1.6 !important; padding:12px !important; }
+      h1 { font-size:18px !important; }
+      h2 { font-size:16px !important; }
+      h3,h4 { font-size:14px !important; }
+      p, li { margin-bottom:4px !important; }
+      .section { margin-bottom:12px !important; }
+
+      /* 確保彩色列印正確輸出 */
+      * { -webkit-print-color-adjust:exact !important; color-adjust:exact !important; print-color-adjust:exact !important; }
+
+      /* 去除瀏覽器預設 margin（減少空白頁） */
+      @page { margin: 12mm 15mm; }
     }
   </style>`;
   html = html.includes('</head>') ? html.replace('</head>',printCSS+'</head>') : printCSS+html;
@@ -1518,6 +1676,7 @@ function renderMathIn(el){
 
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function esc(str){return String(str==null?'':str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function copyText(text){navigator.clipboard.writeText(text).then(()=>Swal.fire({title:'已複製',timer:1000,showConfirmButton:false})).catch(()=>Swal.fire({icon:'warning',title:'複製失敗',text:'請手動複製連結'}));}
 </script>
 </body>
 </html>
