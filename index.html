@@ -452,13 +452,15 @@ const app = {
 
 const API = {
   _call: async (action, data={}) => {
-    const resp = await fetch(app.gasUrl,{
-      method:'POST',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action,data}),
-      redirect:'follow',
-      credentials:'omit'
-    });
+    const bodyStr = JSON.stringify({action, data});
+    // GET 繞過無痕 CORS；超過 6000 字元（如大型 HTML）改用 POST
+    let resp;
+    if(bodyStr.length < 6000){
+      const url = app.gasUrl + '?payload=' + encodeURIComponent(bodyStr);
+      resp = await fetch(url, { method:'GET', redirect:'follow' });
+    } else {
+      resp = await fetch(app.gasUrl, { method:'POST', headers:{'Content-Type':'text/plain'}, body:bodyStr, redirect:'follow' });
+    }
     if(!resp.ok) throw new Error(`HTTP ${resp.status}：無法連線 GAS`);
     const json = await resp.json();
     if(json.status!=='success') throw new Error(json.message||'後端錯誤');
@@ -468,7 +470,14 @@ const API = {
     let lastError;
     for(let attempt=1; attempt<=maxRetries; attempt++){
       try{
-        const resp = await fetch(app.gasUrl,{ method:'POST', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({action,data}), redirect:'follow', credentials:'omit' });
+        const _bodyStr = JSON.stringify({action, data});
+        let resp;
+        if(_bodyStr.length < 6000){
+          const _url = app.gasUrl + '?payload=' + encodeURIComponent(_bodyStr);
+          resp = await fetch(_url, { method:'GET', redirect:'follow' });
+        } else {
+          resp = await fetch(app.gasUrl, { method:'POST', headers:{'Content-Type':'text/plain'}, body:_bodyStr, redirect:'follow' });
+        }
         if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         if(json.status!=='success') throw new Error(json.message||'後端錯誤');
