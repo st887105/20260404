@@ -52,12 +52,10 @@
     .err-bar{height:8px;border-radius:4px;background:#e0e0e0;overflow:hidden;margin:4px 0;}
     .err-fill{height:100%;border-radius:4px;transition:width .6s;}
 
-    /* ★ 修正 1：計算紙樣式重構 */
     #scratch-btn{position:fixed;bottom:80px;right:18px;z-index:1000;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;font-size:1.2rem;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;display:none;align-items:center;justify-content:center;}
     #scratch-modal{position:fixed;inset:0;z-index:1050;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;}
     #scratch-modal.is-open{display:flex;}
     #scratch-inner{cursor:default;background:#fff;width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:16px;box-shadow:0 -4px 20px rgba(0,0,0,.15);padding-bottom:max(16px,env(safe-area-inset-bottom));}
-    /* 改回 canvas */
     #scratch-pad{width:100%; height:35vh; min-height:250px; border:2px dashed #b0bec5; border-radius:10px; background:#fff; touch-action:none; cursor:crosshair;}
 
     #ws-preview-area{border-radius:12px;margin-top:12px;border:1px solid #e0e0e0;-webkit-overflow-scrolling:touch;overflow:auto;}
@@ -327,6 +325,15 @@
                         <button class="btn btn-warning" onclick="saveHelpUrl()">儲存</button>
                       </div>
                     </div>
+                    <!-- ★ 修正1：在後台設定頁新增 GAS 網址管理欄位，讓管理員可在後台修改，無需每次手動輸入 -->
+                    <div class="mb-3">
+                      <label class="form-label text-muted small fw-bold"><i class="fa-solid fa-link me-1 text-primary"></i>GAS 網址（後端連線位址）</label>
+                      <div class="input-group">
+                        <input type="text" id="setting-gas-url" class="form-control font-monospace" style="font-size:.78rem;" placeholder="https://script.google.com/macros/s/...">
+                        <button class="btn btn-primary" onclick="saveGasUrl()">儲存</button>
+                      </div>
+                      <div class="form-text small text-muted">修改後立即生效，無需重新整理。預設網址已內建於程式碼中。</div>
+                    </div>
                     <hr>
                     <div class="mb-3">
                       <label class="form-label text-muted small fw-bold">AI 模型選擇</label>
@@ -434,6 +441,8 @@
 
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw-wGWL1IjmchGh2Dqfx7oAkax7_niFf0vvgu99-d55Dixaxfco70_ETNTytcV2-a357w/exec';
 const app = {
+  // ★ 修正1：優先用 localStorage 中儲存的網址，若無則直接使用 DEFAULT_GAS_URL
+  // 這樣第一次進入就會自動使用預設網址，不需要手動輸入
   gasUrl: localStorage.getItem('gasUrl') || DEFAULT_GAS_URL,
   adminPwd:'', taskList:[], studentList:[],
   currentStudent:null, currentTask:null,
@@ -500,7 +509,6 @@ const API = {
   getTaskQuestions:(n)=>API._call('getTaskQuestions',{taskName:n}),
   getHelpUrl:()=>API._call('getHelpUrl'),
   updateHelpUrl:(url,pwd)=>API._call('updateHelpUrl',{url,pwd}),
-  // ★ v9.1 新增：差異化講義雲端儲存
   saveWorksheetToCloud:(n,g,s,h)=>API._call('saveWorksheetToCloud',{taskName:n,grade:g,subject:s,htmlContent:h}),
   getWorksheetFromCloud:(n,g,s)=>API._call('getWorksheetFromCloud',{taskName:n,grade:g,subject:s}),
 };
@@ -512,12 +520,11 @@ function showView(name){
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  // ★ 修正 4：路由攔截，檢測是否為分享的專屬錯題連結
   const urlParams = new URLSearchParams(window.location.search);
   const practiceTask = urlParams.get('practice');
   
   if (practiceTask) {
-    showView('login'); // 暫時顯示背景
+    showView('login');
     initPracticeMode(practiceTask);
   } else {
     showView('login');
@@ -533,11 +540,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if(e.target===modal) closeScratch();
   });
   
-  // 初始化畫布
   initCanvas();
 });
 
-/* ★ 修正 4：專屬錯題練習模式初始化 */
 async function initPracticeMode(taskName) {
   const { value: stuName } = await Swal.fire({
     title: `🏆 進入補救練習`,
@@ -555,7 +560,6 @@ async function initPracticeMode(taskName) {
     Swal.close();
     if (!data || !data.length) return Swal.fire('錯誤', '此任務無足夠錯題資料', 'error');
 
-    // 展開由後端依照節點分組回傳的錯題
     const allQs = data.flatMap(d => d.questions.map(q => ({...q, node: d.node})));
     if (!allQs.length) return Swal.fire('錯誤', '無錯題', 'error');
 
@@ -602,6 +606,19 @@ async function saveHelpUrl(){
     await API.updateHelpUrl(url, app.adminPwd);
     Swal.fire({icon:'success',title:'操作說明網址已儲存',html:url?`<a href="${esc(url)}" target="_blank">${esc(url)}</a>`:'（已清空，首頁按鈕將隱藏）',timer:2500,showConfirmButton:false});
   }catch(e){Swal.fire({icon:'error',title:'儲存失敗',text:e.message});}
+}
+
+// ★ 修正1：後台設定頁儲存 GAS 網址的函式
+// 儲存後立即更新 app.gasUrl 與 localStorage，無需重整頁面
+function saveGasUrl(){
+  const val = document.getElementById('setting-gas-url').value.trim();
+  if(!val) return Swal.fire({icon:'warning',title:'請輸入 GAS 網址'});
+  if(!val.startsWith('https://script.google.com/')){
+    return Swal.fire({icon:'error',title:'網址格式錯誤',text:'請輸入有效的 Google Apps Script 部署網址'});
+  }
+  app.gasUrl = val;
+  localStorage.setItem('gasUrl', val);
+  Swal.fire({icon:'success',title:'GAS 網址已儲存',text:'已立即生效，無需重新整理。',timer:1800,showConfirmButton:false});
 }
 
 function anonymizeName(name){
@@ -870,17 +887,14 @@ async function previewStudentList(taskName){
   }catch(e){Swal.close();Swal.fire({icon:'error',title:'載入失敗',text:e.message});}
 }
 
-/* ★ 修正 3：預覽所有題庫，不再使用 slice(0,5) */
 async function previewBankQuestions(taskName){
   Swal.fire({title:'載入題目預覽…',allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
-    // ★ v9.1 修正：改用 getTaskQuestions 顯示該任務「全部」題目（含正確 level 欄位）
     const res = await API.getTaskQuestions(taskName);
     Swal.close();
     const qs = res.questions || [];
     if(!qs.length){return Swal.fire({icon:'info',title:'題庫尚無題目',text:'請先點「重新出題」建立題庫。'});}
 
-    // 依 Level 分組統計
     const byLevel = {A:0,B:0,C:0,D:0};
     qs.forEach(q=>{ const lv=q.level||'D'; if(byLevel[lv]!==undefined) byLevel[lv]++; });
     const statsHtml = `<div class="d-flex gap-2 flex-wrap mb-3">
@@ -952,10 +966,8 @@ async function loadResults(){
   }catch(e){area.innerHTML=`<p class="text-danger">載入失敗：${e.message}</p>`;}
 }
 
-/* ★ 修正 4：錯題類似題的進度條與專屬連結生成 */
 async function genSimilarPractice(taskName){
   const area=document.getElementById('similar-practice-area');if(!area)return;
-  // 插入進度條 UI
   area.innerHTML=`
     <div id="sim-prog-area" class="mt-2">
       <div class="d-flex justify-content-between small text-muted mb-1"><span id="sim-prog-msg">準備中…</span></div>
@@ -974,7 +986,6 @@ async function genSimilarPractice(taskName){
     
     if(!data||!data.length){area.innerHTML='<div class="alert alert-info small py-2">此任務尚無足夠錯題資料。</div>';return;}
     
-    // 生成專屬連結
     const shareUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
 
     let html=`
@@ -1001,47 +1012,82 @@ async function genSimilarPractice(taskName){
 
 function toggleResultDetail(ri){const row=document.getElementById('detail-row-'+ri);if(row)row.style.display=row.style.display==='none'?'':'none';}
 
+// ★ 修正2：loadAnalysis 重構 worksheet 雲端讀取邏輯
+// 問題根源：原版先呼叫 _resetWorksheetArea()（顯示 idle 狀態），
+// 再嘗試讀雲端，讀成功後更新狀態——但圖2顯示「分析中…」
+// 表示 analyzeClassWeakNodes 回傳空陣列導致提早 return，worksheet-area 從未顯示。
+// 修正：確保 worksheet-area 與雲端讀取流程獨立、正確執行。
 async function loadAnalysis(){
   const taskName=document.getElementById('analysis-task').value,area=document.getElementById('analysis-area');
-  if(!taskName){area.innerHTML='';return;}area.innerHTML='<div class="text-muted small">分析中…</div>';
+  if(!taskName){area.innerHTML='';return;}
+  area.innerHTML='<div class="text-muted small">分析中…</div>';
+  
+  const wsArea=document.getElementById('worksheet-area');
+  wsArea.style.display='none'; // 先隱藏，等分析完再顯示
+  
   try{
     const nodes=await API.analyzeClassWeakNodes(taskName);
-    if(!nodes.length){area.innerHTML='<p class="text-muted">此任務尚無足夠作答資料。</p>';return;}
+    
+    // ★ 無論有無作答資料，都顯示 worksheet 區塊（讓老師可以生成講義）
+    const task=app.taskList.find(t=>t.taskName===taskName);
+    wsArea.dataset.grade=task?.grade||'';
+    wsArea.dataset.subject=task?.subject||'';
+    wsArea.dataset.taskname=taskName;
+    
+    if(!nodes.length){
+      area.innerHTML='<p class="text-muted">此任務尚無足夠作答資料。</p>';
+      // 即使無作答資料，仍顯示講義區塊（節點從任務本身取得）
+      const taskNodes=(task?.weakNodes||[]).filter(isValidNode).slice(0,3);
+      wsArea.dataset.nodes=JSON.stringify(taskNodes);
+      wsArea.style.display='';
+      _resetWorksheetArea();
+      _tryLoadCloudWorksheet(taskName, task?.grade||'', task?.subject||'');
+      return;
+    }
+    
     let html='<div class="row g-3">';
     nodes.forEach((n,i)=>{
       const color=n.errorRate>=70?'danger':n.errorRate>=40?'warning':'success',pct=n.errorRate||0;
       html+=`<div class="col-12 col-md-6"><div class="card p-3 border-${color}"><div class="d-flex justify-content-between align-items-start"><span class="fw-bold small">${i+1}. ${esc(n.node)}</span><span class="badge bg-${color}">${pct}% 錯誤率</span></div><div class="err-bar mt-1"><div class="err-fill bg-${color}" style="width:${pct}%"></div></div><div class="text-muted small mb-1">答題 ${n.total} 次 / 答錯 ${n.wrong} 次</div>${n.levelStats&&n.levelStats.length?'<hr class="my-1">'+n.levelStats.map(l=>`<div class="small d-flex justify-content-between"><span>Level ${l.level}</span><span class="text-muted">${l.errorRate!==null?l.errorRate+'%':'—'}（${l.total}題）</span></div>`).join(''):''}</div></div>`;
     });
-    html+='</div>';area.innerHTML=html;
-    const task=app.taskList.find(t=>t.taskName===taskName),wsArea=document.getElementById('worksheet-area');
-    wsArea.style.display='';
-    wsArea.dataset.grade=task?.grade||'';
-    wsArea.dataset.subject=task?.subject||'';
+    html+='</div>';
+    area.innerHTML=html;
+    
     wsArea.dataset.nodes=JSON.stringify(nodes.slice(0,3).map(n=>n.node));
-    // ★ v9.1 新增：傳遞 taskname，genWorksheet 需要它來儲存雲端
-    wsArea.dataset.taskname=taskName;
+    wsArea.style.display='';
     _resetWorksheetArea();
-
-    // ★ v9.1 新增：自動嘗試從雲端讀取已存講義，若有則直接顯示（免重新生成）
-    try{
-      const stored = await API._call('getWorksheetFromCloud',{taskName, grade:task?.grade||'', subject:task?.subject||''});
-      if(stored && stored.htmlContent){
-        app.wsHtml = _sanitizeWsHtml(stored.htmlContent);
-        document.getElementById('ws-state-idle').style.display='none';
-        document.getElementById('ws-state-done').style.display='';
-        document.getElementById('ws-toggle-btn').innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
-        // 顯示已有雲端講義提示
-        const wsCard = wsArea.querySelector('.ws-mgmt-card');
-        if(wsCard && !wsCard.querySelector('.ws-cloud-badge')){
-          const badge = document.createElement('span');
-          badge.className='ws-cloud-badge badge bg-info text-dark ms-2 small';
-          badge.innerHTML='<i class="fa-solid fa-cloud me-1"></i>已載入雲端版本';
-          wsCard.querySelector('h6').appendChild(badge);
-        }
-      }
-    }catch(cloudErr){ /* 找不到雲端講義屬正常，使用者需手動生成 */ }
-
+    
+    // ★ 修正2：嘗試從雲端讀取已儲存的講義，成功則直接顯示，失敗則保持 idle 狀態讓用戶手動生成
+    _tryLoadCloudWorksheet(taskName, task?.grade||'', task?.subject||'');
+    
   }catch(e){area.innerHTML=`<p class="text-danger">分析失敗：${e.message}</p>`;}
+}
+
+// ★ 修正2：獨立的雲端講義讀取函式，確保不影響主流程
+// 成功：顯示 done 狀態（可直接列印）；失敗：保持 idle 狀態（讓用戶點生成）
+async function _tryLoadCloudWorksheet(taskName, grade, subject) {
+  try {
+    const stored = await API.getWorksheetFromCloud(taskName, grade, subject);
+    if (stored && stored.htmlContent) {
+      app.wsHtml = _sanitizeWsHtml(stored.htmlContent);
+      // 切換到已有講義的狀態
+      document.getElementById('ws-state-idle').style.display='none';
+      document.getElementById('ws-state-done').style.display='';
+      document.getElementById('ws-toggle-btn').innerHTML='<i class="fa-solid fa-eye me-1"></i>展開預覽';
+      // 加上雲端標示徽章（若尚未加過）
+      const wsArea=document.getElementById('worksheet-area');
+      const wsCard = wsArea.querySelector('.ws-mgmt-card');
+      if(wsCard && !wsCard.querySelector('.ws-cloud-badge')){
+        const badge = document.createElement('span');
+        badge.className='ws-cloud-badge badge bg-info text-dark ms-2 small';
+        badge.innerHTML='<i class="fa-solid fa-cloud me-1"></i>已載入雲端版本';
+        wsCard.querySelector('h6').appendChild(badge);
+      }
+    }
+    // 雲端沒有資料時靜默失敗，保持 idle 狀態，用戶點「生成講義」即可
+  } catch(e) {
+    // 靜默失敗：找不到雲端講義是正常情況，不顯示錯誤
+  }
 }
 
 function _resetWorksheetArea(){
@@ -1059,6 +1105,10 @@ function _resetWorksheetArea(){
     frame.src='about:blank';
     frame.srcdoc='';
   }
+  // 移除舊的雲端徽章，避免切換任務後殘留
+  const wsArea=document.getElementById('worksheet-area');
+  const oldBadge=wsArea.querySelector('.ws-cloud-badge');
+  if(oldBadge) oldBadge.remove();
 }
 
 function toggleWsPreview(){
@@ -1078,7 +1128,6 @@ function toggleWsPreview(){
   }
 }
 
-/* ★ 修正 2：差異化講義前端正確解析 JSON 並動態建構 HTML */
 async function genWorksheet(){
   const ws=document.getElementById('worksheet-area');
   const topNodes=JSON.parse(ws.dataset.nodes||'[]'),grade=ws.dataset.grade,subject=ws.dataset.subject;
@@ -1097,15 +1146,13 @@ async function genWorksheet(){
   const tick=setInterval(()=>{progBar.style.width=Math.min(90,10+Math.round((Date.now()-_waitStart)/1000)*1.5)+'%';},2000);
 
   try{
-    // ★ v9.1 修正：後端 generateTeachingWorksheet 回傳 HTML 字串，直接使用
-    // 舊版 v9.1 錯誤地把回傳值當 JSON Array 呼叫 .forEach() → "jsonArray.forEach is not a function"
     const htmlContent = await API.generateTeachingWorksheet(topNodes, grade, subject);
     clearInterval(rot); clearInterval(tick);
     progBar.style.width='100%'; progMsg.textContent='✅ 學習單生成完成！';
 
     app.wsHtml = _sanitizeWsHtml(htmlContent);
 
-    // ★ v9.1 新增：自動儲存講義到 Google Drive（非同步，不阻擋 UI）
+    // 自動儲存講義到 Google Drive（非同步，不阻擋 UI）
     if(taskName){
       API._call('saveWorksheetToCloud',{taskName,grade,subject,htmlContent:app.wsHtml})
         .then(r=>{ if(r&&r.fileId) console.log('[Worksheet] 已儲存至雲端：'+r.fileName); })
@@ -1126,30 +1173,19 @@ async function genWorksheet(){
 }
 
 function _sanitizeWsHtml(raw){
-  // ★ v9.1 全面強化：四道防線確保輸出永遠是有效 HTML
   let s = String(raw||'').trim();
   if(!s) return '<html><head><meta charset="UTF-8"></head><body><p>（無內容）</p></body></html>';
-
-  // 【第一道】移除 markdown code fence（```html ... ``` 或 ``` ... ```）
   s = s.replace(/^```html\s*/i,'').replace(/^```\s*/i,'').replace(/```\s*$/,'').trim();
-
-  // 【第二道】從第一個 < 到最後一個 > 擷取（過濾 thinking 模型在 HTML 前後殘留的說明文字）
   const firstTag = s.indexOf('<');
   const lastTag  = s.lastIndexOf('>');
   if(firstTag > 0 && lastTag > firstTag){
-    // 前面有非 HTML 文字（thinking 殘留），擷取 HTML 部分
     s = s.substring(firstTag, lastTag + 1).trim();
   } else if(firstTag < 0){
-    // 完全沒有 HTML 標籤（全是文字），包成簡單 HTML
     s = '<p>' + s.replace(/\n/g,'<br>') + '</p>';
   }
-
-  // 【第三道】確保有 UTF-8 charset（防中文亂碼）
   if(s.includes('<head>') && !s.match(/charset/i)){
     s = s.replace('<head>','<head><meta charset="UTF-8">');
   }
-
-  // 【第四道】若只有 body 片段（無 <html>），補齊完整結構
   if(!s.includes('<html')){
     s = '<!DOCTYPE html><html lang="zh-TW"><head>\n'
       + '<meta charset="UTF-8">\n'
@@ -1171,17 +1207,13 @@ function _sanitizeWsHtml(raw){
 
 function _writeToIframe(frame, html){
   if(!frame||!html) return;
-  // ★ v9.1 修正：srcdoc 優先（GitHub Pages CSP 環境下 Blob URL 會被阻擋導致空白）
-  // 策略：srcdoc → Blob URL → document.write
   if(frame._blobUrl){ try{URL.revokeObjectURL(frame._blobUrl);}catch(e){} frame._blobUrl=null; }
-  // 優先用 srcdoc（同源、不受 CSP 限制、中文不亂碼）
   try{
     if('srcdoc' in frame){
       frame.srcdoc = html;
       return;
     }
   }catch(e1){ console.warn('[srcdoc failed]',e1); }
-  // 備援：Blob URL
   try{
     const blob = new Blob([html],{type:'text/html;charset=utf-8'});
     const url  = URL.createObjectURL(blob);
@@ -1189,33 +1221,25 @@ function _writeToIframe(frame, html){
     frame.src = url;
     return;
   }catch(e2){ console.warn('[Blob URL failed]',e2); }
-  // 最後備援：document.write
   try{
     const doc = frame.contentDocument || frame.contentWindow?.document;
     if(doc){ doc.open('text/html','replace'); doc.write(html); doc.close(); }
   }catch(e3){ console.warn('[document.write failed]',e3); }
 }
 
-/* ★ 修正 2 列印樣式：老師版隱藏空格，學生版隱藏答案 */
 function printWorksheet(mode){
   if(!app.wsHtml){Swal.fire({icon:'warning',title:'請先生成講義'});return;}
   let html = app.wsHtml;
   const bodyClass = (mode==='student') ? 'print-student' : 'print-teacher';
-
-  // ★ v9.1 修正：確保有 UTF-8 charset（防止列印時中文亂碼）
   if(!html.match(/charset/i)){
     html = html.includes('<head>') ? html.replace('<head>','<head><meta charset="UTF-8">') : html;
   }
-
-  // 注入 body class（控制教師版/學生版的列印顯隱）
   if(html.includes('<body')){
     html = html.replace(/<body([^>]*)>/i,(m,attrs)=>{
       if(/class=/i.test(attrs)) return m.replace(/class="([^"]*)"/i,`class="$1 ${bodyClass}"`);
       return `<body${attrs} class="${bodyClass}">`;
     });
   } else { html = `<body class="${bodyClass}">` + html + '</body>'; }
-
-  // ★ 注入列印樣式：教師版隱藏學生作答空格，學生版隱藏答案
   const printCSS = `<style>
     @media print{
       body.print-student .answer-section { display:none !important; }
@@ -1226,11 +1250,8 @@ function printWorksheet(mode){
     }
   </style>`;
   html = html.includes('</head>') ? html.replace('</head>',printCSS+'</head>') : printCSS+html;
-
-  // 注入列印觸發腳本
   const printScript = `<script>(function(){function go(){try{window.focus();window.print();}catch(e){}}if(document.readyState==='complete')setTimeout(go,400);else window.addEventListener('load',function(){setTimeout(go,400);},{once:true});})();<\/script>`;
   html = html.includes('</body>') ? html.replace('</body>',printScript+'</body>') : html+printScript;
-
   let frame = document.getElementById('hidden-print-frame');
   if(!frame){
     frame = document.createElement('iframe');
@@ -1250,6 +1271,8 @@ async function loadSettingsTab(){
     document.getElementById('setting-quiz-count').value=settings.quizCount;
     document.getElementById('setting-folder-id').value=folderId||'';
     document.getElementById('setting-help-url').value=helpUrl||'';
+    // ★ 修正1：在設定頁顯示目前使用中的 GAS 網址
+    document.getElementById('setting-gas-url').value=app.gasUrl||'';
     const modelSel=document.getElementById('setting-gemini-model');
     const savedModel=gemini.model||'gemma-4-31b-it';
     if(![...modelSel.options].some(o=>o.value===savedModel)){
@@ -1365,7 +1388,6 @@ async function finishQuiz(){
   document.getElementById('result-review').innerHTML=reviewHtml;
 }
 
-/* ★ 修正 1：重新綁定 SignaturePad 實例 */
 let sigPad = null;
 function initCanvas() {
   const canvas = document.getElementById('scratch-pad');
@@ -1379,7 +1401,6 @@ function toggleScratch(){
     closeScratch();
   } else{
     modal.classList.add('is-open');
-    // 在 Modal 顯示後重新校準比例尺，避免筆跡飄移
     setTimeout(() => {
       const canvas = document.getElementById('scratch-pad');
       const ratio = Math.max(window.devicePixelRatio || 1, 1);
@@ -1434,6 +1455,8 @@ async function wizardCreateAndGenerate(){
   }catch(e){stopProgress();const elapsed=elapsedStr();pMsg.innerHTML=`<span class="text-danger">❌ 失敗（${elapsed}）：${esc(e.message)}</span>`;pEl.textContent='';Swal.fire({icon:'error',title:'建立失敗',html:`<b>錯誤：</b>${esc(e.message)}`,confirmButtonText:'我知道了'});}
 }
 
+// ★ 修正1：showGasUrlDialog 保留給頁首按鈕使用（非登入狀態也可快速修改）
+// 儲存後同步更新 app.gasUrl，並重新載入任務清單
 function showGasUrlDialog(){
   Swal.fire({title:'設定 GAS 網址',html:`<p class="text-muted small mb-2">從 Google Apps Script「部署」頁面取得網址</p><input id="swal-gas-url" class="swal2-input" value="${esc(app.gasUrl)}" placeholder="https://script.google.com/macros/s/...">`,confirmButtonText:'儲存',cancelButtonText:'取消',showCancelButton:true,
     preConfirm:()=>{const val=document.getElementById('swal-gas-url').value.trim();if(!val.startsWith('https://script.google.com/')){Swal.showValidationMessage('請輸入有效的 GAS 網址');return false;}return val;}
