@@ -456,7 +456,8 @@ const API = {
       method:'POST',
       headers:{'Content-Type':'text/plain'},
       body:JSON.stringify({action,data}),
-      redirect:'follow'
+      redirect:'follow',
+      credentials:'omit'
     });
     if(!resp.ok) throw new Error(`HTTP ${resp.status}：無法連線 GAS`);
     const json = await resp.json();
@@ -467,7 +468,7 @@ const API = {
     let lastError;
     for(let attempt=1; attempt<=maxRetries; attempt++){
       try{
-        const resp = await fetch(app.gasUrl,{ method:'POST', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({action,data}), redirect:'follow' });
+        const resp = await fetch(app.gasUrl,{ method:'POST', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({action,data}), redirect:'follow', credentials:'omit' });
         if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         if(json.status!=='success') throw new Error(json.message||'後端錯誤');
@@ -590,7 +591,7 @@ async function loadTasksForLogin(){
   }catch(e){
     sel.innerHTML='<option value="">-- 連線失敗 --</option>';
     // ★ 修正1：連線失敗時提示用戶可點右上角 GAS 網址按鈕修改
-    msg.innerHTML=`<span class="text-danger">無法連線 GAS：${e.message}。請點右上角「GAS 網址」按鈕確認網址是否正確。</span>`;
+    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線伺服器。可能原因：<br>1. 您是否使用「無痕模式」？請切換回一般視窗<br>2. 瀏覽器是否有防追蹤外掛封鎖？請暫停外掛<br>3. 若以上皆否，請點右上角「GAS 網址」確認網址</span>`;
   }
 }
 
