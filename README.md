@@ -1,1 +1,1 @@
-往後你每次重新部署 GAS 時，只要改 HTML 第一行的 DEFAULT_GAS_URL，push 到 GitHub 就完成，完全不需要讓老師去手動更新。
+https://script.google.com/macros/s/AKfycbwJ5ot116YfctRySWtZdCF8fEEdj1Qkw9IHGJk5bbmM_tACM3ZTqAavmF-i7DF1_wm83Q/exec
