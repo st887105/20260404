@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- 版號更新為 v9.7：純 Simple Request 徹底解決 OPTIONS 404 與 CORS 阻擋 -->
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.7)</title>
+  <!-- 版號更新為 v9.8：混合 GET/POST 模式，徹底繞開 CORS 阻擋 -->
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.8)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -411,7 +411,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.7 ｜
+    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.8 ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -433,29 +433,40 @@ const app = {
 };
 
 const API = {
-  // ── 終極智慧整合版 v9.7：純 Simple Request 完全避開 OPTIONS Preflight ──
+  // ── 終極智慧整合版 v9.8：GET/POST 混合模式徹底解決 CORS ──
   _call: async (action, data={}) => {
     const payload = JSON.stringify({action, data});
     
+    // 1. 對於短資料 (登入、讀取題庫等)，強制走 GET 模式
+    // 瀏覽器對 GET 的 302 轉址支援度最高，完全沒有 CORS 阻擋問題
+    if (payload.length <= 5000) {
+      try {
+        const sep = app.gasUrl.includes('?') ? '&' : '?';
+        const url = app.gasUrl + sep + 'payload=' + encodeURIComponent(payload);
+        const resp = await fetch(url, { method: 'GET' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        if (json.status !== 'success') throw new Error(json.message || '後端錯誤');
+        return json.data;
+      } catch (err) {
+        console.error("[API GET Error]", err);
+        throw new Error(`連線失敗 (${err.message})。請確認 GAS 網址是否正確，且已部署為「所有人」。`);
+      }
+    }
+
+    // 2. 對於大資料 (如儲存大量名冊、講義)，走純字串 POST 模式
     try {
-      // 終極修復：完全不帶任何 headers，強制瀏覽器發送 text/plain 簡單請求
-      // 這能 100% 避開會觸發 GAS 404 的 OPTIONS 預檢請求
       const resp = await fetch(app.gasUrl, {
         method: 'POST',
         body: payload
       });
-      
-      if (!resp.ok) {
-        throw new Error('伺服器回報 HTTP 狀態碼 ' + resp.status);
-      }
-      
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const json = await resp.json();
       if (json.status !== 'success') throw new Error(json.message || '後端發生錯誤');
-      
       return json.data;
     } catch (err) {
-      console.error("[API Error]", err);
-      throw new Error(`連線失敗 (${err.message})。排查：1. 確認 GAS 已重新發布為「新版本」 2. 若有新增授權，需在 GAS 編輯器內點擊「執行」一次。`);
+      console.error("[API POST Error]", err);
+      throw new Error(`大資料上傳失敗 (${err.message})。若持續發生，代表 GAS 端內部執行錯誤 (500)，請至 GAS 編輯器檢查程式碼或重新部署。`);
     }
   },
 
@@ -1569,7 +1580,7 @@ async function wizardCreateAndGenerate(){
     await API.uploadTaskData(taskName,grade,subject,students,wizSelectedNodes);
     pBar.style.width='10%';pMsg.textContent='✅ 學生名冊儲存完成，開始 AI 出題…';
     let gs={isPaid:false};try{gs=await API.getGeminiSettings();}catch(e){}
-    const delay=gs.isPaid?500:6000;let batchIndex=0,totalBatches=null;
+    const delay=gs.isPaid?500:6000;let batchIndex=0,totalBatches=nulla;
     while(true){const result=await API.generateBatch(wizSelectedNodes,grade,subject,batchIndex);totalBatches=result.total||totalBatches||1;const pct=Math.min(95,Math.round(10+(result.current/Math.max(totalBatches,1))*85));pBar.style.width=pct+'%';pMsg.textContent=`✅ ${result.current}/${totalBatches} 批完成（${pct}%）`;if(result.done)break;batchIndex++;_rotMsgIdx=(_rotMsgIdx+1)%WAITING_MSGS.length;pMsg.textContent=WAITING_MSGS[_rotMsgIdx];await sleep(delay);}
     stopProgress();const elapsed=elapsedStr();pBar.style.width='100%';pMsg.innerHTML=`🎉 完成！耗時 <b>${elapsed}</b>`;pEl.textContent='';
     app.taskList=await API.getTasks();populateAdminTaskDropdowns();loadTasksForLogin();
