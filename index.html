@@ -453,7 +453,7 @@ const API = {
         method:'POST', headers:{'Content-Type':'text/plain'},
         body: bodyStr, redirect:'follow'
       });
-      if(!resp.ok) throw new Error('HTTP '+resp.status+'：POST 連線失敗');
+      if(!resp.ok) throw new Error('HTTP '+resp.status+': POST 連線失敗');
       const json = await resp.json();
       if(json.status!=='success') throw new Error(json.message||'後端錯誤');
       return json.data;
@@ -461,7 +461,7 @@ const API = {
     // GET（讀取類）
     const getUrl = app.gasUrl + '?payload=' + encodeURIComponent(bodyStr);
     const resp = await fetch(getUrl, {method:'GET', redirect:'follow'});
-    if(!resp.ok) throw new Error('HTTP '+resp.status+'：GET 連線失敗');
+    if(!resp.ok) throw new Error('HTTP '+resp.status+': GET 連線失敗');
     const json = await resp.json();
     if(json.status!=='success') throw new Error(json.message||'後端錯誤');
     return json.data;
