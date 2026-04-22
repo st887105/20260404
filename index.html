@@ -435,71 +435,34 @@ const app = {
 };
 
 const API = {
-  // ── JSONP GET：以動態 <script> 繞過 GitHub Pages → GAS 的 CORS 限制 ──
-  // 若 GAS 尚未重新部署（舊版不支援 callback），自動 fallback 到直接 fetch
-  _jsonp: (url) => new Promise((resolve, reject) => {
-    const cbName = '_gasJSONP_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-    let settled = false;
-    const done = (fn) => { if(settled) return; settled=true; fn(); };
-
-    const timer = setTimeout(() => {
-      done(()=>{ delete window[cbName]; script.remove();
-        reject(new Error('連線逾時（30秒），請確認網路或 GAS 是否正常')); });
-    }, 15000);
-
-    window[cbName] = (data) => {
-      clearTimeout(timer);
-      done(()=>{ delete window[cbName]; script.remove(); resolve(data); });
-    };
-
-    const script = document.createElement('script');
-    // GAS 舊版不含 callback 支援時，回傳純 JSON 而非 JSONP，會觸發 onerror
-    // → fallback：用一般 fetch（此時 GAS 已重新部署才能成功）
-    script.onerror = () => {
-      clearTimeout(timer);
-      delete window[cbName];
-      script.remove();
-      if(settled) return;
-      // 嘗試直接 fetch（GAS 新版部署後支援 CORS）
-      const plainUrl = url.replace(/&callback=[^&]+/, '');
-      fetch(plainUrl, {redirect:'follow'})
-        .then(r => r.json())
-        .then(json => done(()=>resolve(json)))
-        .catch(() => done(()=>reject(new Error(
-          'GAS 連線失敗。
-請確認：
-① GAS 已重新部署（管理部署作業 → 建立新版本）
-② 存取設定為「所有人」'
-        ))));
-    };
-    script.src = url + '&callback=' + cbName;
-    document.head.appendChild(script);
-  }),
-
-  // ── 主要呼叫：讀取類用 JSONP-GET，寫入類用 POST ──
+  // ── 統一呼叫：GAS 對 GET/POST 皆允許跨域（Access-Control-Allow-Origin: *）
+  // 讀取類用 GET（payload 在 query string），寫入類用 POST（payload 在 body）
+  // 不再需要 JSONP，直接 fetch 即可（解決 SyntaxError 問題）
   _call: async (action, data={}) => {
     const bodyStr = JSON.stringify({action, data});
-    // 寫入類 action 或 payload 過大 → 強制 POST（GAS 允許跨域 text/plain POST）
     const POST_ACTIONS = new Set([
       'submitQuizResult','uploadTaskData','generateBatch','generateBatchFromFolder',
       'regenerateBatchForTask','generateTeachingWorksheet','updateSystemPrompts',
       'updateGeminiSettings','updateHelpUrl','saveWorksheetToCloud',
       'setupDatabase','clearBankCache','clearNodesFromBank',
-      'updateQuizSettings','updateFolderId','verifyAdmin','updateSystemPrompts'
+      'updateQuizSettings','updateFolderId','verifyAdmin'
     ]);
     if(POST_ACTIONS.has(action) || bodyStr.length >= 5500){
+      // POST（寫入類）
       const resp = await fetch(app.gasUrl, {
         method:'POST', headers:{'Content-Type':'text/plain'},
         body: bodyStr, redirect:'follow'
       });
-      if(!resp.ok) throw new Error(`HTTP ${resp.status}：POST 連線失敗`);
+      if(!resp.ok) throw new Error('HTTP '+resp.status+'：POST 連線失敗');
       const json = await resp.json();
       if(json.status!=='success') throw new Error(json.message||'後端錯誤');
       return json.data;
     }
-    // 讀取類 → JSONP（GET）
-    const url = app.gasUrl + '?payload=' + encodeURIComponent(bodyStr);
-    const json = await API._jsonp(url);
+    // GET（讀取類）
+    const getUrl = app.gasUrl + '?payload=' + encodeURIComponent(bodyStr);
+    const resp = await fetch(getUrl, {method:'GET', redirect:'follow'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status+'：GET 連線失敗');
+    const json = await resp.json();
     if(json.status!=='success') throw new Error(json.message||'後端錯誤');
     return json.data;
   },
@@ -514,7 +477,7 @@ const API = {
           method:'POST', headers:{'Content-Type':'text/plain'},
           body: bodyStr, redirect:'follow'
         });
-        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if(!resp.ok) throw new Error('HTTP '+resp.status);
         const json = await resp.json();
         if(json.status!=='success') throw new Error(json.message||'後端錯誤');
         return json.data;
