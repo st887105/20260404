@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- 加入明確的版號，方便確認快取是否已清除 -->
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.2)</title>
+  <!-- 版號更新為 v9.3 -->
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.3)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -411,7 +411,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.2 ｜
+    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.3 ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -486,8 +486,7 @@ const API = {
 
       const url = app.gasUrl + '?callback=' + callbackName + '&payload=' + encodeURIComponent(payload);
       script.src = url;
-      // 加上 crossorigin 以避免 Chrome 的阻擋策略
-      script.crossOrigin = "anonymous";
+      // ⚠️ 已經移除 script.crossOrigin = "anonymous"，讓瀏覽器允許 JSONP 正常跨域
       document.head.appendChild(script);
     });
   },
