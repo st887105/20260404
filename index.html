@@ -437,18 +437,32 @@ const app = {
 const API = {
   // ── 統一用 POST：GAS GET 會 302 redirect 導致 CORS header 遺失
   // POST 直接回應，不會 redirect，CORS header 正常保留
-  _call: async (action, data={}) => {
-    const resp = await fetch(app.gasUrl, {
-      method: 'POST',
-      headers: {'Content-Type': 'text/plain'},
-      body: JSON.stringify({action, data}),
-      redirect: 'follow'
-    });
-    if(!resp.ok) throw new Error('HTTP '+resp.status+' - 無法連線 GAS');
+_call: async (action, data={}) => {
+  const payload = JSON.stringify({action, data});
+
+  // GET 模式（繞過 CORS）：payload 塞進 URL 參數
+  // 超過 6000 字元才退回 POST（避免 URL 過長）
+  if (payload.length <= 6000) {
+    const url = app.gasUrl + '?payload=' + encodeURIComponent(payload);
+    const resp = await fetch(url, { redirect: 'follow' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' - 無法連線 GAS');
     const json = await resp.json();
-    if(json.status !== 'success') throw new Error(json.message || '後端錯誤');
+    if (json.status !== 'success') throw new Error(json.message || '後端錯誤');
     return json.data;
-  },
+  }
+
+  // fallback: POST（payload 太大時，例如 saveWorksheetToCloud）
+  const resp = await fetch(app.gasUrl, {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain'},
+    body: payload,
+    redirect: 'follow'
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' - 無法連線 GAS');
+  const json = await resp.json();
+  if (json.status !== 'success') throw new Error(json.message || '後端錯誤');
+  return json.data;
+},
 
   // ── 成績上傳：大 payload，強制 POST + retry ──
   _submitWithRetry: async (action, data={}, maxRetries=3) => {
