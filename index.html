@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- 版號更新為 v9.6：強化 POST 標頭與錯誤攔截 -->
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.6)</title>
+  <!-- 版號更新為 v9.7：改用 JSONP 解決 GitHub Pages CORS 問題 -->
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v9.7)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -411,7 +411,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.6 ｜
+    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.7 ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -419,7 +419,7 @@
 <script>
 'use strict';
 
-// ⚠️ 非常重要：請將這裡的網址，替換成您剛剛在 GAS 編輯器中點擊「管理部署作業」後看到的「最新網頁應用程式網址」
+// ⚠️ 非常重要：請將這裡的網址，替換成您在 GAS 編輯器中點擊「管理部署作業」後看到的「最新網頁應用程式網址」
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwJ5ot116YfctRySWtZdCF8fEEdj1Qkw9lHGJk5bbmM_tACM3ZTqAavmF-i7DF1_wm83Q/exec';
 
 const app = {
@@ -432,45 +432,68 @@ const app = {
   wsHtml:'', wsPreviewOpen: false,
 };
 
+// ============================================================
+// ★ v9.7 核心修復：改用 JSONP 解決 GitHub Pages → GAS 的 CORS 問題
+// 原理：GAS doGet 支援 ?callback=xxx 的 JSONP 呼叫，
+//       JSONP 用 <script> 標籤載入，完全不受 CORS 限制。
+// ============================================================
 const API = {
-  // ── 終極智慧整合版 v9.6：處理 302 轉址與 404 攔截 ──
-  _call: async (action, data={}) => {
-    const payload = JSON.stringify({action, data});
-    
-    try {
-      // 確保使用 text/plain 發送 Simple Request 避開 OPTIONS 預檢，並加入 redirect: 'follow' 處理 GAS 轉址
-      const resp = await fetch(app.gasUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        redirect: 'follow',
-        body: payload
-      });
-      
-      if (!resp.ok) {
-        if (resp.status === 404) {
-          throw new Error('找不到指定的 GAS 網址 (404)。請確認您複製了最新的「部署網址」，並貼到 index.html 的 DEFAULT_GAS_URL 中！');
+  _jsonpCounter: 0,
+
+  _call: (action, data={}) => {
+    return new Promise((resolve, reject) => {
+      const callbackName = '__gasCallback_' + (++API._jsonpCounter) + '_' + Date.now();
+      const payload = JSON.stringify({action, data});
+      const url = app.gasUrl
+        + '?callback=' + encodeURIComponent(callbackName)
+        + '&payload=' + encodeURIComponent(payload);
+
+      // 超時保護（GAS 免費版最長約 6 分鐘，設 5 分鐘保護）
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('請求逾時（超過 5 分鐘）。GAS 執行時間已達上限，請稍後再試。'));
+      }, 5 * 60 * 1000);
+
+      function cleanup() {
+        clearTimeout(timer);
+        delete window[callbackName];
+        const el = document.getElementById('jsonp_' + callbackName);
+        if (el) el.parentNode.removeChild(el);
+      }
+
+      window[callbackName] = (result) => {
+        cleanup();
+        if (!result) {
+          reject(new Error('GAS 回傳空白，請確認部署設定正確。'));
+          return;
         }
-        throw new Error('HTTP 狀態碼 ' + resp.status);
-      }
-      
-      const json = await resp.json();
-      if (json.status !== 'success') throw new Error(json.message || '後端回傳錯誤');
-      
-      return json.data;
-    } catch (err) {
-      console.error("[API Error]", err);
-      // 判斷是否在 Canvas (blob:) 預覽環境中
-      if (window.location.protocol === 'blob:' || window.location.hostname.includes('usercontent')) {
-        throw new Error(`【預覽環境限制】Canvas 沙盒會阻擋安全連線，請直接將程式碼發布至 GitHub Pages 測試！(${err.message})`);
-      }
-      throw new Error(`連線失敗 (${err.message})。排查：1. 若有新權限，需在 GAS 編輯器按「執行」授權 2. 確認有建立「新版本」部署。`);
-    }
+        if (result.status !== 'success') {
+          reject(new Error(result.message || '後端回傳錯誤'));
+          return;
+        }
+        resolve(result.data);
+      };
+
+      const script = document.createElement('script');
+      script.id = 'jsonp_' + callbackName;
+      script.src = url;
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('無法連線到 GAS。請確認：① GAS 已部署為「所有人」可存取 ② 部署網址已貼到 DEFAULT_GAS_URL ③ 已建立「新版本」部署'));
+      };
+      document.head.appendChild(script);
+    });
   },
 
   _submitWithRetry: async (action, data={}, maxRetries=3) => {
-    return API._call(action, data); 
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await API._call(action, data);
+      } catch(e) {
+        if (i === maxRetries - 1) throw e;
+        await sleep(2000);
+      }
+    }
   },
 
   getTasks:()=>API._call('getTasks'),
