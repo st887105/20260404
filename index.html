@@ -21,8 +21,7 @@
     .app-header{background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;padding:16px 0;box-shadow:0 4px 12px rgba(0,0,0,.18);margin-bottom:24px;position:relative;}
     .app-header h2{font-size:clamp(1rem,3vw,1.5rem);margin-bottom:4px;}
     .app-header p{font-size:clamp(.7rem,2vw,.88rem);opacity:.85;}
-    .btn-gas{background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:6px;padding:3px 10px;font-size:.75rem;cursor:pointer;white-space:nowrap;}
-    .card{border-radius:var(--radius-card);border:none;box-shadow:var(--shadow-card);}
+.card{border-radius:var(--radius-card);border:none;box-shadow:var(--shadow-card);}
     .login-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,460px));justify-content:center;gap:1.2rem;}
 
     #help-btn-area{margin-top:14px;text-align:center;}
@@ -94,9 +93,7 @@
     <h2 class="mb-1"><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
     <p class="mb-0">數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救</p>
   </div>
-  <div style="position:absolute;top:10px;right:12px;">
-    <button class="btn-gas" onclick="showGasUrlDialog()"><i class="fa-solid fa-link me-1"></i>GAS 網址</button>
-  </div>
+
 </header>
 
 <iframe id="hidden-print-frame" title="列印用框架" aria-hidden="true" tabindex="-1"></iframe>
@@ -330,15 +327,6 @@
                     </div>
                     <hr>
                     <div class="mb-3">
-                      <label class="form-label text-muted small fw-bold">GAS 部署網址</label>
-                      <div class="input-group">
-                        <input type="text" id="setting-gas-url" class="form-control font-monospace" placeholder="https://script.google.com/macros/s/...">
-                        <button class="btn btn-warning" onclick="saveGasUrlFromSettings()">儲存</button>
-                      </div>
-                      <div class="form-text small text-muted">修改後立即生效，無需重新整理。</div>
-                    </div>
-                    <hr>
-                    <div class="mb-3">
                       <label class="form-label text-muted small fw-bold">AI 模型選擇</label>
                       <div class="input-group input-group-sm">
                         <select id="setting-gemini-model" class="form-select font-monospace">
@@ -442,13 +430,12 @@
 <script>
 'use strict';
 
-// ★ 修正：GAS 網址直接寫死在程式碼中，不依賴 localStorage
-// 無痕模式、一般模式皆可正常使用
+// GAS 網址直接寫死在程式碼中，無需 localStorage
+// ✅ 所有模式（無痕/一般）皆可正常使用
+// 注意：GAS 後端的 doGet 需支援 JSONP callback 參數（見 README）
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwJ5ot116YfctRySWtZdCF8fEEdj1Qkw9lHGJk5bbmM_tACM3ZTqAavmF-i7DF1_wm83Q/exec';
 
 const app = {
-  // ★ 修正：直接使用 DEFAULT_GAS_URL，不再讀取 localStorage
-  // 若老師在「設定」頁面修改網址，僅在當次 session 生效（存在 app.gasUrl）
   gasUrl: DEFAULT_GAS_URL,
   adminPwd:'', taskList:[], studentList:[],
   currentStudent:null, currentTask:null,
@@ -459,40 +446,70 @@ const app = {
 };
 
 const API = {
+  // ── JSONP GET：以動態 <script> 繞過 GitHub Pages → GAS 的 CORS 限制 ──
+  _jsonp: (url) => new Promise((resolve, reject) => {
+    const cbName = '_gasJSONP_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => {
+      delete window[cbName]; script.remove();
+      reject(new Error('連線逾時（30秒），請確認網路或 GAS 是否正常'));
+    }, 30000);
+    window[cbName] = (data) => {
+      clearTimeout(timer); delete window[cbName]; script.remove(); resolve(data);
+    };
+    const script = document.createElement('script');
+    script.src = url + '&callback=' + cbName;
+    script.onerror = () => {
+      clearTimeout(timer); delete window[cbName]; script.remove();
+      reject(new Error('GAS 連線失敗，請確認部署網址是否正確且已設為「所有人」存取'));
+    };
+    document.head.appendChild(script);
+  }),
+
+  // ── 主要呼叫：讀取類用 JSONP-GET，寫入類用 POST ──
   _call: async (action, data={}) => {
     const bodyStr = JSON.stringify({action, data});
-    let resp;
-    if(bodyStr.length < 6000){
-      const url = app.gasUrl + '?payload=' + encodeURIComponent(bodyStr);
-      resp = await fetch(url, { method:'GET', redirect:'follow' });
-    } else {
-      resp = await fetch(app.gasUrl, { method:'POST', headers:{'Content-Type':'text/plain'}, body:bodyStr, redirect:'follow' });
+    // 寫入類 action 或 payload 過大 → 強制 POST（GAS 允許跨域 text/plain POST）
+    const POST_ACTIONS = new Set([
+      'submitQuizResult','uploadTaskData','generateBatch','generateBatchFromFolder',
+      'regenerateBatchForTask','generateTeachingWorksheet','updateSystemPrompts',
+      'updateGeminiSettings','updateHelpUrl','saveWorksheetToCloud',
+      'setupDatabase','clearBankCache','clearNodesFromBank',
+      'updateQuizSettings','updateFolderId','verifyAdmin','updateSystemPrompts'
+    ]);
+    if(POST_ACTIONS.has(action) || bodyStr.length >= 5500){
+      const resp = await fetch(app.gasUrl, {
+        method:'POST', headers:{'Content-Type':'text/plain'},
+        body: bodyStr, redirect:'follow'
+      });
+      if(!resp.ok) throw new Error(`HTTP ${resp.status}：POST 連線失敗`);
+      const json = await resp.json();
+      if(json.status!=='success') throw new Error(json.message||'後端錯誤');
+      return json.data;
     }
-    if(!resp.ok) throw new Error(`HTTP ${resp.status}：無法連線 GAS`);
-    const json = await resp.json();
+    // 讀取類 → JSONP（GET）
+    const url = app.gasUrl + '?payload=' + encodeURIComponent(bodyStr);
+    const json = await API._jsonp(url);
     if(json.status!=='success') throw new Error(json.message||'後端錯誤');
     return json.data;
   },
 
+  // ── 成績上傳：大 payload，強制 POST + retry ──
   _submitWithRetry: async (action, data={}, maxRetries=3) => {
+    const bodyStr = JSON.stringify({action, data});
     let lastError;
     for(let attempt=1; attempt<=maxRetries; attempt++){
       try{
-        const _bodyStr = JSON.stringify({action, data});
-        let resp;
-        if(action === 'submitQuizResult' || _bodyStr.length >= 6000){
-          resp = await fetch(app.gasUrl, { method:'POST', headers:{'Content-Type':'text/plain'}, body:_bodyStr, redirect:'follow' });
-        } else {
-          const _url = app.gasUrl + '?payload=' + encodeURIComponent(_bodyStr);
-          resp = await fetch(_url, { method:'GET', redirect:'follow' });
-        }
+        const resp = await fetch(app.gasUrl, {
+          method:'POST', headers:{'Content-Type':'text/plain'},
+          body: bodyStr, redirect:'follow'
+        });
         if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         if(json.status!=='success') throw new Error(json.message||'後端錯誤');
         return json.data;
       }catch(e){
-        lastError=e;
-        if(attempt<maxRetries) await new Promise(r=>setTimeout(r,1500*attempt));
+        lastError = e;
+        if(attempt < maxRetries) await new Promise(r=>setTimeout(r, 1500*attempt));
       }
     }
     throw lastError;
@@ -636,7 +653,7 @@ async function loadTasksForLogin(){
   }catch(e){
     sel.innerHTML='<option value="">-- 連線失敗 --</option>';
     // ★ 修正：拿掉「無痕模式」相關提示，因為 GAS 網址已內建，不再是無痕問題
-    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線伺服器。可能原因：<br>1. 網路連線問題，請確認網路是否正常<br>2. 若有防火牆或廣告封鎖外掛，請暫停後重新整理<br>3. 若問題持續，請點右上角「GAS 網址」確認網址是否正確</span>`;
+    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線伺服器。可能原因：<br>1. 網路連線問題，請確認網路是否正常<br>2. 若有防火牆或廣告封鎖外掛，請暫停後重新整理<br>3. GAS 部署設定需確認為「所有人」可存取，並已更新 doGet 支援 JSONP</span>`;
   }
 }
 
@@ -651,17 +668,6 @@ async function saveHelpUrl(){
     await API.updateHelpUrl(url, app.adminPwd);
     Swal.fire({icon:'success',title:'操作說明網址已儲存',html:url?`<a href="${esc(url)}" target="_blank">${esc(url)}</a>`:'（已清空，首頁按鈕將隱藏）',timer:2500,showConfirmButton:false});
   }catch(e){Swal.fire({icon:'error',title:'儲存失敗',text:e.message});}
-}
-
-function saveGasUrlFromSettings(){
-  const val=document.getElementById('setting-gas-url').value.trim();
-  if(!val.startsWith('https://script.google.com/')){
-    return Swal.fire({icon:'warning',title:'請輸入有效的 GAS 網址'});
-  }
-  // ★ 修正：只更新 app.gasUrl（session 內生效），不寫入 localStorage
-  app.gasUrl=val;
-  Swal.fire({icon:'success',title:'GAS 網址已套用',text:'本次使用新網址連線，重新整理後恢復預設。',timer:1800,showConfirmButton:false})
-    .then(()=>loadTasksForLogin());
 }
 
 // 去識別化：將真實姓名遮蔽
@@ -1393,8 +1399,6 @@ async function loadSettingsTab(){
     document.getElementById('setting-quiz-count').value=settings.quizCount;
     document.getElementById('setting-folder-id').value=folderId||'';
     document.getElementById('setting-help-url').value=helpUrl||'';
-    // ★ 修正：設定頁顯示當前使用的 GAS 網址（app.gasUrl，不是 localStorage）
-    document.getElementById('setting-gas-url').value=app.gasUrl||'';
     const modelSel=document.getElementById('setting-gemini-model');
     const savedModel=gemini.model||'gemma-4-31b-it';
     if(![...modelSel.options].some(o=>o.value===savedModel)){
@@ -1624,12 +1628,6 @@ async function wizardCreateAndGenerate(){
     app.taskList=await API.getTasks();populateAdminTaskDropdowns();loadTasksForLogin();
     Swal.fire({icon:'success',title:'🎉 任務建立完成！',html:`<b>${esc(taskName)}</b> 已完成 AI 出題。<br><span class="badge bg-secondary">耗時：${elapsed}</span>`,confirmButtonText:'好的'});
   }catch(e){stopProgress();const elapsed=elapsedStr();pMsg.innerHTML=`<span class="text-danger">❌ 失敗（${elapsed}）：${esc(e.message)}</span>`;pEl.textContent='';Swal.fire({icon:'error',title:'建立失敗',html:`<b>錯誤：</b>${esc(e.message)}`,confirmButtonText:'我知道了'});}
-}
-
-function showGasUrlDialog(){
-  Swal.fire({title:'設定 GAS 網址',html:`<p class="text-muted small mb-2">從 Google Apps Script「部署」頁面取得網址<br><span class="text-info small">⚠️ 此設定僅在本次瀏覽有效，關閉或重整後恢復預設網址</span></p><input id="swal-gas-url" class="swal2-input" value="${esc(app.gasUrl)}" placeholder="https://script.google.com/macros/s/...">`,confirmButtonText:'套用',cancelButtonText:'取消',showCancelButton:true,
-    preConfirm:()=>{const val=document.getElementById('swal-gas-url').value.trim();if(!val.startsWith('https://script.google.com/')){Swal.showValidationMessage('請輸入有效的 GAS 網址');return false;}return val;}
-  }).then(r=>{if(r.isConfirmed){app.gasUrl=r.value;Swal.fire({icon:'success',title:'GAS 網址已套用（本次有效）',timer:1200,showConfirmButton:false});loadTasksForLogin();}});
 }
 
 function renderMathIn(el){
