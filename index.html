@@ -21,7 +21,7 @@
     .app-header{background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;padding:16px 0;box-shadow:0 4px 12px rgba(0,0,0,.18);margin-bottom:24px;position:relative;}
     .app-header h2{font-size:clamp(1rem,3vw,1.5rem);margin-bottom:4px;}
     .app-header p{font-size:clamp(.7rem,2vw,.88rem);opacity:.85;}
-.card{border-radius:var(--radius-card);border:none;box-shadow:var(--shadow-card);}
+    .card{border-radius:var(--radius-card);border:none;box-shadow:var(--shadow-card);}
     .login-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,460px));justify-content:center;gap:1.2rem;}
 
     #help-btn-area{margin-top:14px;text-align:center;}
@@ -93,7 +93,6 @@
     <h2 class="mb-1"><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
     <p class="mb-0">數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救</p>
   </div>
-
 </header>
 
 <iframe id="hidden-print-frame" title="列印用框架" aria-hidden="true" tabindex="-1"></iframe>
@@ -411,7 +410,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Apps Script × GitHub 協作 ｜ v9.1 ｜
+    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v9.1 ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -419,9 +418,6 @@
 <script>
 'use strict';
 
-// GAS 網址直接寫死在程式碼中，無需 localStorage
-// ✅ 所有模式（無痕/一般）皆可正常使用
-// 注意：GAS 後端的 doGet 需支援 JSONP callback 參數（見 README）
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwJ5ot116YfctRySWtZdCF8fEEdj1Qkw9lHGJk5bbmM_tACM3ZTqAavmF-i7DF1_wm83Q/exec';
 
 const app = {
@@ -435,55 +431,66 @@ const app = {
 };
 
 const API = {
-  // ── 統一用 POST：GAS GET 會 302 redirect 導致 CORS header 遺失
-  // POST 直接回應，不會 redirect，CORS header 正常保留
-_call: async (action, data={}) => {
-  const payload = JSON.stringify({action, data});
-
-  // GET 模式（繞過 CORS）：payload 塞進 URL 參數
-  // 超過 6000 字元才退回 POST（避免 URL 過長）
-  if (payload.length <= 6000) {
-    const url = app.gasUrl + '?payload=' + encodeURIComponent(payload);
-    const resp = await fetch(url, { redirect: 'follow' });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' - 無法連線 GAS');
-    const json = await resp.json();
-    if (json.status !== 'success') throw new Error(json.message || '後端錯誤');
-    return json.data;
-  }
-
-  // fallback: POST（payload 太大時，例如 saveWorksheetToCloud）
-  const resp = await fetch(app.gasUrl, {
-    method: 'POST',
-    headers: {'Content-Type': 'text/plain'},
-    body: payload,
-    redirect: 'follow'
-  });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status + ' - 無法連線 GAS');
-  const json = await resp.json();
-  if (json.status !== 'success') throw new Error(json.message || '後端錯誤');
-  return json.data;
-},
-
-  // ── 成績上傳：大 payload，強制 POST + retry ──
-  _submitWithRetry: async (action, data={}, maxRetries=3) => {
-    const bodyStr = JSON.stringify({action, data});
-    let lastError;
-    for(let attempt=1; attempt<=maxRetries; attempt++){
-      try{
+  // ── 終極智慧整合版：JSONP 與 POST 自動切換機制 ──
+  _call: async (action, data={}) => {
+    const payload = JSON.stringify({action, data});
+    
+    // 【修改與優化】1. 安全長度判斷。超過 2000 字元或特定敏感寫入任務，強制使用 POST。
+    if (payload.length > 2000 || action === 'saveWorksheetToCloud' || action === 'submitQuizResult' || action === 'uploadTaskData') {
+      try {
         const resp = await fetch(app.gasUrl, {
-          method:'POST', headers:{'Content-Type':'text/plain'},
-          body: bodyStr, redirect:'follow'
+          method: 'POST',
+          headers: {'Content-Type': 'text/plain'}, // 避免觸發 OPTIONS Preflight
+          body: payload,
+          redirect: 'follow'
         });
-        if(!resp.ok) throw new Error('HTTP '+resp.status);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' - 無法連線 GAS');
         const json = await resp.json();
-        if(json.status!=='success') throw new Error(json.message||'後端錯誤');
+        if (json.status !== 'success') throw new Error(json.message || '後端錯誤');
         return json.data;
-      }catch(e){
-        lastError = e;
-        if(attempt < maxRetries) await new Promise(r=>setTimeout(r, 1500*attempt));
+      } catch (postErr) {
+        throw new Error('資料傳輸失敗，請確認已在 GAS 按下「管理部署作業 > 建立新版本」: ' + postErr.message);
       }
     }
-    throw lastError;
+
+    // 【修改與優化】2. 短資料強制走 JSONP，無痛繞過所有 CORS 與第三方 Cookie 限制
+    return new Promise((resolve, reject) => {
+      const callbackName = 'gas_cb_' + Math.round(1000000 * Math.random());
+      const script = document.createElement('script');
+      let timeoutId;
+
+      window[callbackName] = (json) => {
+        clearTimeout(timeoutId);
+        document.head.removeChild(script);
+        delete window[callbackName];
+        if (json.status !== 'success') {
+          reject(new Error(json.message || '後端錯誤'));
+        } else {
+          resolve(json.data);
+        }
+      };
+
+      script.onerror = () => {
+        clearTimeout(timeoutId);
+        document.head.removeChild(script);
+        delete window[callbackName];
+        reject(new Error('跨域連線失敗，請檢查 GAS 部署是否設為「所有人」'));
+      };
+
+      timeoutId = setTimeout(() => {
+        document.head.removeChild(script);
+        delete window[callbackName];
+        reject(new Error('連線逾時，網路不穩或 GAS 回應太慢'));
+      }, 15000);
+
+      const url = app.gasUrl + '?callback=' + callbackName + '&payload=' + encodeURIComponent(payload);
+      script.src = url;
+      document.head.appendChild(script);
+    });
+  },
+
+  _submitWithRetry: async (action, data={}, maxRetries=3) => {
+    return API._call(action, data); 
   },
 
   getTasks:()=>API._call('getTasks'),
@@ -623,7 +630,6 @@ async function loadTasksForLogin(){
     _applyHelpUrl(helpUrl);
   }catch(e){
     sel.innerHTML='<option value="">-- 連線失敗 --</option>';
-    // ★ 修正：拿掉「無痕模式」相關提示，因為 GAS 網址已內建，不再是無痕問題
     msg.innerHTML=`<span class="text-danger">⚠️ 無法連線 GAS 伺服器。請依序確認：<br>① GAS 已貼上新程式碼並<b>重新部署</b>（管理部署作業→建立新版本）<br>② 部署存取設定為「<b>所有人</b>」<br>③ 網路正常且無廣告封鎖外掛</span>`;
   }
 }
@@ -641,7 +647,6 @@ async function saveHelpUrl(){
   }catch(e){Swal.fire({icon:'error',title:'儲存失敗',text:e.message});}
 }
 
-// 去識別化：將真實姓名遮蔽
 function anonymizeName(name){
   const raw=String(name==null?'':name).trim();
   if(!raw||raw==='null'||raw==='undefined') return '';
@@ -846,6 +851,7 @@ async function uploadAndGenerate(){
     Swal.fire({icon:'error',title:'出題中斷',html:`<b>錯誤：</b>${esc(e.message)}<br><br><div class="alert alert-warning small text-start mb-0"><b>🔧 排查：</b><br>1. GAS 編輯器 → 選 <code>testGeminiAPI</code> → ▶ 執行<br>2. 確認 API 金鑰有效</div>`,confirmButtonText:'我知道了'});
   }
 }
+
 async function clearNodeBank(){
   if(!app.excelNodes.length) return Swal.fire({icon:'warning',title:'請先預覽 Excel 確認節點清單'});
   const grade=document.getElementById('task-grade').value,subject=document.getElementById('task-subject').value;
@@ -1577,7 +1583,7 @@ function toggleWizNode(node,checked){if(checked&&!wizSelectedNodes.includes(node
 function addWizCustomNode(){const input=document.getElementById('wiz-custom-node'),val=input.value.trim();if(!val||val.length<2)return;if(wizSelectedNodes.includes(val)){input.value='';return;}wizSelectedNodes.push(val);input.value='';renderWizSelected();updateWizNodeTableHeader();updateWizStudentTableNodes();}
 function renderWizSelected(){document.getElementById('wiz-selected-nodes').innerHTML=wizSelectedNodes.length?wizSelectedNodes.map((n,i)=>`<span class="weak-node-badge" style="cursor:pointer" onclick="removeWizNode(${i})" title="點擊移除">${esc(n)} ×</span>`).join(''):'<span class="text-muted small">（尚未選擇）</span>';}
 function removeWizNode(idx){const n=wizSelectedNodes[idx];wizSelectedNodes.splice(idx,1);const cb=document.getElementById('nd-'+n);if(cb)cb.checked=false;renderWizSelected();updateWizNodeTableHeader();updateWizStudentTableNodes();}
-function updateWizNodeTableHeader(){const th=document.getElementById('wiz-node-header');if(!th)return;if(!wizSelectedNodes.length){th.textContent='弱點節點（請先在②選節點）';return;}th.innerHTML=wizSelectedNodes.map(n=>`<span class="weak-node-badge" style="font-size:.7rem;padding:2px 8px;">${esc(n)}</span>`).join(' ');}
+function updateWizNodeTableHeader(){const th=document.getElementById('wiz-node-header');if(!th)return;if(!wizSelectedNodes.length){th.textContent='弱點節點（請先在②選節點）';return;}th.innerHTML=wizSelectedNodes.length?wizSelectedNodes.map(n=>`<span class="weak-node-badge" style="font-size:.7rem;padding:2px 8px;">${esc(n)}</span>`).join(' '):'';}
 function updateWizStudentTableNodes(){[...document.querySelectorAll('#wiz-student-tbody tr')].forEach(row=>{const nc=row.querySelector('.wiz-nodes-cell');if(!nc)return;const checked=[...row.querySelectorAll('.wiz-node-cb:checked')].map(cb=>cb.value);nc.innerHTML=wizSelectedNodes.length?wizSelectedNodes.map(n=>`<div class="form-check form-check-inline mb-0"><input class="form-check-input wiz-node-cb" type="checkbox" value="${esc(n)}" ${checked.includes(n)?'checked':''}><label class="form-check-label" style="font-size:.8rem">${esc(n)}</label></div>`).join(''):'<span class="text-muted small">先在②選節點</span>';});}
 function addWizStudentRow(){const tbody=document.getElementById('wiz-student-tbody'),rowNum=tbody.querySelectorAll('tr').length+1,tr=document.createElement('tr');tr.innerHTML=`<td><input type="text" class="form-control form-control-sm wiz-num" value="${String(rowNum).padStart(2,'0')}" style="width:58px"></td><td><input type="text" class="form-control form-control-sm wiz-name" placeholder="姓名"></td><td class="wiz-nodes-cell">${wizSelectedNodes.length?wizSelectedNodes.map(n=>`<div class="form-check form-check-inline mb-0"><input class="form-check-input wiz-node-cb" type="checkbox" value="${esc(n)}"><label class="form-check-label" style="font-size:.8rem">${esc(n)}</label></div>`).join(''):'<span class="text-muted small">先在②選節點</span>'}</td><td><button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="this.closest('tr').remove()" style="font-size:.75rem">×</button></td>`;tbody.appendChild(tr);}
 function addWizStudentRows(n){for(let i=0;i<n;i++)addWizStudentRow();}
