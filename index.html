@@ -505,8 +505,9 @@ function saveGasUrl() {
   _saveGasUrlToStorage(url);
   _initGasUrlDisplay();
   toggleGasUrlEdit();
+  _rebuildBridge();
   Swal.fire({ icon: 'success', title: '✅ 網址已更新！', text: '正在重新連線…', timer: 1200, showConfirmButton: false });
-  setTimeout(() => loadTasksForLogin(), 1200);
+  setTimeout(() => loadTasksForLogin(), 1400);
 }
 
 function resetToDefaultGasUrl() {
@@ -514,82 +515,145 @@ function resetToDefaultGasUrl() {
   try { localStorage.removeItem('gasUrl'); } catch(e) {}
   _initGasUrlDisplay();
   toggleGasUrlEdit();
+  _rebuildBridge();
   Swal.fire({ icon: 'success', title: '✅ 已還原預設網址', text: '正在重新連線…', timer: 1200, showConfirmButton: false });
-  setTimeout(() => loadTasksForLogin(), 1200);
+  setTimeout(() => loadTasksForLogin(), 1400);
 }
 
 // ==========================================
-// 🌐 API 呼叫層 - JSONP → Fetch GET → POST 三重保險
+// 🌐 API 呼叫層 - iframe 橋接法（徹底解決 CORS／帳號衝突）
 // ==========================================
+// 原理：GAS 的重導向目標是 script.googleusercontent.com，
+// 這個網域不帶 Google 登入 Cookie，所以用 iframe 載入 GAS URL，
+// 再透過 postMessage 取回結果，完全不受 CORS 和帳號狀態影響。
+
+let _gasBridge = null;
+let _gasBridgeReady = false;
+const _gasBridgeQueue = {};
+
+function _ensureBridge() {
+  if (_gasBridge && document.body.contains(_gasBridge)) return;
+  _gasBridgeReady = false;
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;border:none;';
+  // 橋接頁：一個最小 HTML，載入後接收 postMessage 並用 fetch 打 GAS
+  const bridgeHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><script>
+    var gasUrl = '';
+    window.addEventListener('message', function(e) {
+      if (!e.data) return;
+      var msg = e.data;
+      if (msg.type === 'init') { gasUrl = msg.url; parent.postMessage({type:'ready'}, '*'); return; }
+      if (msg.type === 'call') {
+        var id = msg.id, payload = msg.payload;
+        var url = gasUrl + (gasUrl.includes('?')?'&':'?') + 'payload=' + encodeURIComponent(payload);
+        fetch(url, {method:'GET', redirect:'follow'})
+          .then(function(r){ return r.text(); })
+          .then(function(txt){
+            var clean = txt.replace(/^[^{\\[]*/, '').replace(/[\\s]*$/, '');
+            try { var res = JSON.parse(clean); parent.postMessage({type:'result',id:id,res:res}, '*'); }
+            catch(e) { parent.postMessage({type:'result',id:id,err:'解析失敗: '+txt.substring(0,100)}, '*'); }
+          })
+          .catch(function(err){ parent.postMessage({type:'result',id:id,err:err.message}, '*'); });
+      }
+    });
+  <\/script></body></html>`;
+  const blob = new Blob([bridgeHtml], { type: 'text/html' });
+  iframe.src = URL.createObjectURL(blob);
+  document.body.appendChild(iframe);
+  _gasBridge = iframe;
+
+  window.addEventListener('message', function(e) {
+    if (!e.data) return;
+    const msg = e.data;
+    if (msg.type === 'ready') {
+      _gasBridgeReady = true;
+      return;
+    }
+    if (msg.type === 'result' && _gasBridgeQueue[msg.id]) {
+      const { resolve, reject, timer } = _gasBridgeQueue[msg.id];
+      delete _gasBridgeQueue[msg.id];
+      clearTimeout(timer);
+      if (msg.err) reject(new Error(msg.err));
+      else if (msg.res && msg.res.status === 'success') resolve(msg.res.data);
+      else reject(new Error(msg.res ? msg.res.message : '後端未知錯誤'));
+    }
+  });
+}
+
+function _bridgeCall(payloadStr, timeout) {
+  return new Promise((resolve, reject) => {
+    _ensureBridge();
+    const id = 'c' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+    const timer = setTimeout(() => {
+      delete _gasBridgeQueue[id];
+      reject(new Error('連線逾時（' + (timeout/1000) + '秒）。請確認 GAS URL 正確且已部署為新版本。'));
+    }, timeout || 20000);
+    _gasBridgeQueue[id] = { resolve, reject, timer };
+
+    const doSend = () => {
+      _gasBridge.contentWindow.postMessage({ type: 'call', id, payload: payloadStr }, '*');
+    };
+
+    if (_gasBridgeReady) {
+      doSend();
+    } else {
+      // 等橋接 iframe 初始化完成
+      let waited = 0;
+      const waitInterval = setInterval(() => {
+        waited += 50;
+        if (_gasBridgeReady) { clearInterval(waitInterval); doSend(); return; }
+        if (waited > 5000) {
+          clearInterval(waitInterval);
+          // 橋接 iframe 逾時，重建並用 fetch 直接打
+          _gasBridge = null; _gasBridgeReady = false;
+          clearTimeout(timer);
+          delete _gasBridgeQueue[id];
+          // fallback：直接 fetch（無痕且未登入時可成功）
+          const url = app.gasUrl + (app.gasUrl.includes('?')?'&':'?') + 'payload=' + encodeURIComponent(payloadStr);
+          fetch(url, { method: 'GET', redirect: 'follow' })
+            .then(r => r.text())
+            .then(txt => {
+              const clean = txt.replace(/^[^{\[]*/, '').replace(/\s*$/, '');
+              const res = JSON.parse(clean);
+              if (res && res.status === 'success') resolve(res.data);
+              else reject(new Error(res ? res.message : '後端未知錯誤'));
+            })
+            .catch(err => reject(new Error('連線失敗：' + err.message)));
+        }
+      }, 50);
+      // 傳送 init 訊息（可能重複傳沒關係）
+      try { _gasBridge.contentWindow.postMessage({ type: 'init', url: app.gasUrl }, '*'); } catch(e) {}
+    }
+  });
+}
+
+// 當 gasUrl 改變時重建橋接
+function _rebuildBridge() {
+  if (_gasBridge) { try { _gasBridge.remove(); } catch(e) {} }
+  _gasBridge = null; _gasBridgeReady = false;
+  _ensureBridge();
+  // 傳送新的 gasUrl 給橋接 iframe
+  const waitAndInit = setInterval(() => {
+    if (_gasBridgeReady || (_gasBridge && _gasBridge.contentWindow)) {
+      clearInterval(waitAndInit);
+      try { _gasBridge.contentWindow.postMessage({ type: 'init', url: app.gasUrl }, '*'); } catch(e) {}
+    }
+  }, 100);
+}
+
 const API = {
   _call: async (action, data = {}) => {
     const payloadStr = JSON.stringify({ action, data });
     const isLarge = payloadStr.length > 1500 || action === 'uploadTaskData' || action === 'saveWorksheetToCloud';
 
     if (!isLarge) {
-      return new Promise((resolve, reject) => {
-        const cbName = '_gas_cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
-        let isDone = false;
-
-        const timer = setTimeout(() => {
-          if (isDone) return;
-          isDone = true; cleanup();
-          reject(new Error('連線逾時（15秒）。請確認 GAS URL 正確且已重新部署為新版本。'));
-        }, 15000);
-
-        const cleanup = () => {
-          delete window[cbName];
-          const el = document.getElementById(cbName);
-          if (el) el.remove();
-        };
-
-        window[cbName] = (res) => {
-          if (isDone) return;
-          isDone = true; clearTimeout(timer); cleanup();
-          if (res && res.status === 'success') resolve(res.data);
-          else reject(new Error(res ? res.message : '後端發生未知錯誤'));
-        };
-
-        const sep = app.gasUrl.includes('?') ? '&' : '?';
-        const reqUrl = app.gasUrl + sep + 'payload=' + encodeURIComponent(payloadStr);
-
-        const script = document.createElement('script');
-        script.id = cbName;
-        script.src = reqUrl + '&callback=' + cbName;
-
-        script.onerror = () => {
-          if (isDone) return;
-          cleanup();
-          console.warn('[API] JSONP 被阻擋，嘗試 Fetch GET…');
-          fetch(reqUrl + '&callback=_noop', {
-            method: 'GET',
-            headers: { 'Accept': 'application/json, text/javascript, */*' }
-          })
-          .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-          .then(txt => {
-            if (isDone) return;
-            isDone = true; clearTimeout(timer);
-            const clean = txt.replace(/^[^({\[]*/, '').replace(/[)\s]*$/, '');
-            try {
-              const res = JSON.parse(clean);
-              if (res && res.status === 'success') resolve(res.data);
-              else reject(new Error(res ? res.message : '後端回應格式錯誤'));
-            } catch(e) {
-              reject(new Error('無法解析後端回應。請確認 GAS 網址正確並已建立新版本部署。'));
-            }
-          })
-          .catch(err => {
-            if (isDone) return;
-            isDone = true; clearTimeout(timer);
-            console.error('[API Fallback Error]', err);
-            reject(new Error('連線失敗：' + err.message + '\n\n請確認：①GAS網址已更新 ②已建立新版本 ③使用無痕模式'));
-          });
-        };
-
-        document.body.appendChild(script);
-      });
+      // 確保橋接 iframe 知道目前的 gasUrl
+      if (_gasBridge && _gasBridgeReady) {
+        try { _gasBridge.contentWindow.postMessage({ type: 'init', url: app.gasUrl }, '*'); } catch(e) {}
+      }
+      return _bridgeCall(payloadStr, 20000);
     } else {
-      // 大資料使用 text/plain POST（避免 CORS preflight）
+      // 大資料使用 text/plain POST（避免 CORS preflight，GAS 對 POST 不做 CORS 限制）
       try {
         const resp = await fetch(app.gasUrl, {
           method: 'POST',
@@ -603,7 +667,7 @@ const API = {
         return json.data;
       } catch (err) {
         console.error('[API POST Error]', err);
-        throw new Error('大資料傳輸失敗（' + err.message + '）。請使用無痕模式測試。');
+        throw new Error('資料傳輸失敗（' + err.message + '）');
       }
     }
   },
@@ -662,6 +726,15 @@ function isValidNode(val){const s=String(val||'').trim();if(!s||['-','未診斷'
 // ==========================================
 window.addEventListener('DOMContentLoaded', () => {
   _initGasUrlDisplay();
+  _ensureBridge(); // 預先建立橋接 iframe
+
+  // 等橋接就緒後送 gasUrl
+  const initTimer = setInterval(() => {
+    if (_gasBridge && _gasBridge.contentWindow) {
+      clearInterval(initTimer);
+      try { _gasBridge.contentWindow.postMessage({ type: 'init', url: app.gasUrl }, '*'); } catch(e) {}
+    }
+  }, 100);
 
   const urlParams = new URLSearchParams(window.location.search);
   const practiceTask = urlParams.get('practice');
