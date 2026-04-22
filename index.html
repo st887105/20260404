@@ -442,9 +442,14 @@
 <script>
 'use strict';
 
+// ★ 修正：GAS 網址直接寫死在程式碼中，不依賴 localStorage
+// 無痕模式、一般模式皆可正常使用
 const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwJ5ot116YfctRySWtZdCF8fEEdj1Qkw9lHGJk5bbmM_tACM3ZTqAavmF-i7DF1_wm83Q/exec';
+
 const app = {
-  gasUrl: localStorage.getItem('gasUrl') || DEFAULT_GAS_URL,
+  // ★ 修正：直接使用 DEFAULT_GAS_URL，不再讀取 localStorage
+  // 若老師在「設定」頁面修改網址，僅在當次 session 生效（存在 app.gasUrl）
+  gasUrl: DEFAULT_GAS_URL,
   adminPwd:'', taskList:[], studentList:[],
   currentStudent:null, currentTask:null,
   quizQuestions:[], qIndex:0, answers:[],
@@ -469,14 +474,12 @@ const API = {
     return json.data;
   },
 
-  // ★ 修正2：submitQuizResult 一律強制使用 POST，避免 GET payload 被 CORS 擋
   _submitWithRetry: async (action, data={}, maxRetries=3) => {
     let lastError;
     for(let attempt=1; attempt<=maxRetries; attempt++){
       try{
         const _bodyStr = JSON.stringify({action, data});
         let resp;
-        // 成績上傳含 details 陣列，payload 較大，一律用 POST 避免 CORS 問題
         if(action === 'submitQuizResult' || _bodyStr.length >= 6000){
           resp = await fetch(app.gasUrl, { method:'POST', headers:{'Content-Type':'text/plain'}, body:_bodyStr, redirect:'follow' });
         } else {
@@ -558,7 +561,6 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initPracticeMode(taskName) {
-  // ★ 修正2：先確認身份（學生或老師示範）
   const { value: stuName } = await Swal.fire({
     title: `🏆 進入補救練習`,
     html: `目前任務：<b>${esc(taskName)}</b><br>
@@ -571,7 +573,6 @@ async function initPracticeMode(taskName) {
   if (!stuName) return;
 
   const loadStart = Date.now();
-  // ★ 修正2：載入文字改為「錯誤類似題載入中」，並顯示載入時間
   Swal.fire({
     title:'錯誤類似題載入中…',
     html:'<div id="practice-load-timer" class="text-muted small mt-1">已等待 0 秒</div>',
@@ -595,7 +596,6 @@ async function initPracticeMode(taskName) {
     const allQs = data.flatMap(d => d.questions.map(q => ({...q, node: d.node})));
     if (!allQs.length) return Swal.fire('提示', '此任務目前無足夠錯題。', 'info');
 
-    // ★ 修正2：老師示範模式提示
     const isTeacher = stuName.includes('老師') || stuName.includes('示範') || stuName.includes('teacher');
     if(isTeacher){
       await Swal.fire({
@@ -635,7 +635,8 @@ async function loadTasksForLogin(){
     _applyHelpUrl(helpUrl);
   }catch(e){
     sel.innerHTML='<option value="">-- 連線失敗 --</option>';
-    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線伺服器。可能原因：<br>1. 您是否使用「無痕模式」？請切換回一般視窗<br>2. 瀏覽器是否有防追蹤外掛封鎖？請暫停外掛<br>3. 若以上皆否，請點右上角「GAS 網址」確認網址</span>`;
+    // ★ 修正：拿掉「無痕模式」相關提示，因為 GAS 網址已內建，不再是無痕問題
+    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線伺服器。可能原因：<br>1. 網路連線問題，請確認網路是否正常<br>2. 若有防火牆或廣告封鎖外掛，請暫停後重新整理<br>3. 若問題持續，請點右上角「GAS 網址」確認網址是否正確</span>`;
   }
 }
 
@@ -657,13 +658,13 @@ function saveGasUrlFromSettings(){
   if(!val.startsWith('https://script.google.com/')){
     return Swal.fire({icon:'warning',title:'請輸入有效的 GAS 網址'});
   }
+  // ★ 修正：只更新 app.gasUrl（session 內生效），不寫入 localStorage
   app.gasUrl=val;
-  localStorage.setItem('gasUrl',val);
-  Swal.fire({icon:'success',title:'GAS 網址已儲存',text:'將重新連線…',timer:1500,showConfirmButton:false})
+  Swal.fire({icon:'success',title:'GAS 網址已套用',text:'本次使用新網址連線，重新整理後恢復預設。',timer:1800,showConfirmButton:false})
     .then(()=>loadTasksForLogin());
 }
 
-// ★ 去識別化：將真實姓名遮蔽，用於顯示和上傳
+// 去識別化：將真實姓名遮蔽
 function anonymizeName(name){
   const raw=String(name==null?'':name).trim();
   if(!raw||raw==='null'||raw==='undefined') return '';
@@ -703,7 +704,6 @@ async function studentLogin(){
   const taskName=document.getElementById('login-task').value;
   const number=document.getElementById('login-number').value;
   if(!taskName||!number) return Swal.fire({icon:'warning',title:'請完成選擇',text:'請選擇測驗任務及您的姓名'});
-  // ★ 以 number（座號）作為唯一識別，不依賴姓名比對
   const student=app.studentList.find(s=>s.number===number);
   if(!student) return Swal.fire({icon:'error',title:'找不到學生資料'});
   app.currentTask=app.taskList.find(t=>t.taskName===taskName);
@@ -776,7 +776,6 @@ function previewExcel(){
           let wn=[];try{wn=JSON.parse(r[3]||'[]');}catch(e){}
           wn=wn.filter(isValidNode);students.push({number:num,name,weakNodes:wn});wn.forEach(n=>allNodes.add(n));});
       }else{
-        // ★ 圖1格式：A欄=座號、B欄=姓名、C欄起=弱點節點名稱
         let hasValid=false;
         dataRows.slice(0,5).forEach(r=>{for(let j=2;j<r.length;j++){if(isValidNode(r[j])){hasValid=true;break;}}});
         if(hasValid){
@@ -784,7 +783,7 @@ function previewExcel(){
           dataRows.forEach(r=>{
             if(!r[0]||!String(r[0]).trim())return;
             let num=String(r[0]).trim();
-            let name=String(r[1]||'').trim(); // B欄=姓名，可在 Google Sheet 修改
+            let name=String(r[1]||'').trim();
             const wn=[];
             for(let j=2;j<r.length;j++){const v=String(r[j]||'').trim();if(isValidNode(v))wn.push(v);}
             students.push({number:num,name,weakNodes:wn});
@@ -1011,7 +1010,6 @@ async function loadResults(){
       <tr id="detail-row-${ri}" class="result-detail-row" style="display:none;"><td colspan="6" class="p-0"><div class="p-2">${(r.details||[]).map((d,di)=>`<div class="d-flex align-items-start gap-2 p-2 rounded mb-1 ${d.correct?'bg-light':'bg-danger bg-opacity-10'}"><span>${d.correct?'✅':'❌'}</span><div class="small flex-grow-1"><div class="fw-bold">第${di+1}題【${esc(d.node||'—')}】Level ${d.level||'?'}</div><div class="text-muted" style="white-space:pre-wrap;word-break:break-word;">${esc(d.text||'—')}</div><div>作答：<b>${esc(d.selected||'—')}</b>　正解：<b class="text-success">${esc(d.answer||'—')}</b></div></div></div>`).join('')}</div></td></tr>`;
     });
     html+='</tbody></table></div>';
-    // ★ 修正2：加上老師示範題連結區塊
     const demoUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
     html+=`<div class="mt-3 p-3 border rounded bg-light">
       <div class="fw-bold small mb-2"><i class="fa-solid fa-chalkboard-teacher text-primary me-1"></i>老師工具列</div>
@@ -1032,14 +1030,11 @@ async function loadResults(){
   }catch(e){area.innerHTML=`<p class="text-danger">載入失敗：${e.message}</p>`;}
 }
 
-// ★ 修正1：類似題生成後可直接預覽（仿差異化），並提供重新生成按鈕
-// 生成結果存在 app._simData，切換預覽不需重新呼叫 API
 const app_sim = { data: null, taskName: '', previewOpen: false };
 
 async function genSimilarPractice(taskName, forceRegen){
   const area=document.getElementById('similar-practice-area');if(!area)return;
 
-  // 若已有資料且非強制重新生成，直接顯示結果
   if(!forceRegen && app_sim.data && app_sim.taskName===taskName){
     _renderSimResult(area, app_sim.data, taskName);
     return;
@@ -1061,7 +1056,6 @@ async function genSimilarPractice(taskName, forceRegen){
   startProgress(pMsg);
   let pct = 0;
   const tick = setInterval(() => { pct = Math.min(pct + 5, 90); bar.style.width = pct + '%'; }, 800);
-  // 顯示載入秒數
   const timerTick = setInterval(()=>{
     const s = Math.round((Date.now()-genStart)/1000);
     if(pTimer) pTimer.textContent = `已等待 ${s} 秒`;
@@ -1073,7 +1067,6 @@ async function genSimilarPractice(taskName, forceRegen){
 
     if(!data||!data.length){area.innerHTML='<div class="alert alert-info small py-2">此任務尚無足夠錯題資料。</div>';return;}
 
-    // 存入快取
     app_sim.data = data;
     app_sim.taskName = taskName;
     app_sim.previewOpen = false;
@@ -1088,7 +1081,6 @@ async function genSimilarPractice(taskName, forceRegen){
 function _renderSimResult(area, data, taskName){
   const shareUrl = `${window.location.origin}${window.location.pathname}?practice=${encodeURIComponent(taskName)}`;
 
-  // 建立類似題 HTML（預覽用）
   let previewHtml = '';
   data.forEach(item=>{
     previewHtml+=`<div class="card mb-3 border-warning">
@@ -1317,7 +1309,6 @@ function _sanitizeWsHtml(raw){
       + '  .answer-key,.answer-section{background:#f9f9f9;border-left:4px solid #4caf50;padding:8px 14px;margin-top:10px;}\n'
       + '  .student-space{height:60px;border-bottom:1px solid #aaa;margin:10px 0;}\n'
       + '  .section{margin-bottom:20px;page-break-inside:avoid;break-inside:avoid;}\n'
-      + '  /* ★ 防跨頁：所有題目區塊不斷頁 */\n'
       + '  .c-box,.c-level,.b-box,.b-level,.a-box,.a-level,.section,table,\n'
       + '  [class*="question"],[class*="題目"],[class*="練習"]{page-break-inside:avoid;break-inside:avoid;}\n'
       + '  h1,h2,h3,h4,h5{page-break-after:avoid;break-after:avoid;}\n'
@@ -1360,10 +1351,8 @@ function printWorksheet(mode){
     });
   } else { html = `<body class="${bodyClass}">` + html + '</body>'; }
 
-  // ★ 修正3：強化防跨頁 CSS，學生版完整隱藏解答區塊
   const printCSS = `<style>
     @media print{
-      /* 學生版：隱藏所有解答相關區塊 */
       body.print-student .answer-section,
       body.print-student .answer-key,
       body.print-student [class*="answer"],
@@ -1372,33 +1361,13 @@ function printWorksheet(mode){
       body.print-student [id*="解答"],
       body.print-student [class*="參考答案"],
       body.print-student .teacher-only { display:none !important; }
-      /* 教師版：隱藏學生作答空間 */
       body.print-teacher .student-space { display:none !important; }
-
-      /* 防跨頁：所有主要區塊不斷頁 */
-      .ws-question,
-      .section,
-      .c-box,.c-level,
-      .b-box,.b-level,
-      .a-box,.a-level,
-      .card, .border, .border-rounded,
-      table { page-break-inside:avoid !important; break-inside:avoid !important; }
-
-      /* 標題前不斷頁 */
+      .ws-question,.section,.c-box,.c-level,.b-box,.b-level,.a-box,.a-level,.card,.border,.border-rounded,table { page-break-inside:avoid !important; break-inside:avoid !important; }
       h1,h2,h3,h4,h5,h6 { page-break-after:avoid !important; break-after:avoid !important; }
-
-      /* 區塊間距調小，減少浪費空間 */
       body { font-size:13px !important; line-height:1.6 !important; padding:12px !important; }
-      h1 { font-size:18px !important; }
-      h2 { font-size:16px !important; }
-      h3,h4 { font-size:14px !important; }
-      p, li { margin-bottom:4px !important; }
-      .section { margin-bottom:12px !important; }
-
-      /* 確保彩色列印正確輸出 */
+      h1 { font-size:18px !important; } h2 { font-size:16px !important; } h3,h4 { font-size:14px !important; }
+      p, li { margin-bottom:4px !important; } .section { margin-bottom:12px !important; }
       * { -webkit-print-color-adjust:exact !important; color-adjust:exact !important; print-color-adjust:exact !important; }
-
-      /* 去除瀏覽器預設 margin（減少空白頁） */
       @page { margin: 12mm 15mm; }
     }
   </style>`;
@@ -1424,6 +1393,7 @@ async function loadSettingsTab(){
     document.getElementById('setting-quiz-count').value=settings.quizCount;
     document.getElementById('setting-folder-id').value=folderId||'';
     document.getElementById('setting-help-url').value=helpUrl||'';
+    // ★ 修正：設定頁顯示當前使用的 GAS 網址（app.gasUrl，不是 localStorage）
     document.getElementById('setting-gas-url').value=app.gasUrl||'';
     const modelSel=document.getElementById('setting-gemini-model');
     const savedModel=gemini.model||'gemma-4-31b-it';
@@ -1504,7 +1474,6 @@ function selectOption(btn,selected){
     if(prefix===correct)b.classList.add('correct');
     else if(prefix===selected&&!isRight)b.classList.add('wrong');
   });
-  // ★ 修正1：作答後的提示不直接給答案，只給方向性解題思路
   if(!isRight){
     const hintEl=document.getElementById('quiz-hint');
     const rawHint=String(q.hint||'').replace(/^\[Level [ABCD]\]\s*/,'');
@@ -1518,7 +1487,6 @@ function selectOption(btn,selected){
 
 function lvOf(q){return(q.hint?.match(/Level ([ABCD])/)?.[1])||q.level||'D';}
 
-// ★ 修正1：showHint 按鈕也不直接給答案
 function showHint(){
   const q=app.quizQuestions[app.qIndex],el=document.getElementById('quiz-hint');
   const rawHint=String(q.hint||'').replace(/^\[Level [ABCD]\]\s*/,'');
@@ -1527,10 +1495,8 @@ function showHint(){
   el.style.display='';
 }
 
-// ★ 新增：統一處理提示文字，移除直接給答案的句子
 function _buildSafeHint(rawHint){
   if(!rawHint) return '請仔細閱讀題目，試著再想想看！';
-  // 移除「故答案為X」「正解為X」「答案是X」「選X」等直接洩漏答案的句子
   let safe = rawHint
     .replace(/[，,]?\s*故答案[為是]?\s*[A-D][\s。]?/g, '')
     .replace(/[，,]?\s*所以答案[為是]?\s*[A-D][\s。]?/g, '')
@@ -1542,7 +1508,6 @@ function _buildSafeHint(rawHint){
     .replace(/正解是[A-D]/g, '')
     .replace(/選項[A-D]正確/g, '')
     .trim();
-  // 移除後若為空，給預設提示
   if(!safe) return '請仔細思考題目的條件，一步一步推導！';
   return esc(safe);
 }
@@ -1559,13 +1524,12 @@ async function finishQuiz(){
   const elapsed=Math.round((Date.now()-app.startTime)/1000),total=app.answers.length,correct=app.answers.filter(a=>a.correct).length;
   const score=total>0?Math.round(correct/total*100):0;
 
-  // ★ 修正2+3：去識別化（傳匿名姓名）+ 強制 POST（在 _submitWithRetry 已處理）
   const anonNameForSubmit = anonymizeName(app.currentStudent.name||'');
   try{
     await API.submitQuizResult({
       taskName: app.currentTask?.taskName||'',
-      number:   app.currentStudent.number,   // 以座號作為唯一識別
-      name:     anonNameForSubmit,            // 只傳匿名版姓名
+      number:   app.currentStudent.number,
+      name:     anonNameForSubmit,
       score,
       elapsed,
       details:  app.answers
@@ -1589,7 +1553,6 @@ async function finishQuiz(){
   document.getElementById('result-weak-nodes').innerHTML=wrongNodes.length?'<p class="fw-bold mb-1">需要加強的節點：</p>'+wrongNodes.map(n=>`<span class="weak-node-badge">${esc(n)}</span>`).join(''):'';
   let reviewHtml='<h6 class="fw-bold mt-3 mb-2">作答明細</h6>';
   app.answers.forEach((a,i)=>{
-    // ★ 修正1：明細中的提示也去除直接答案
     const safeDetailHint = a.hint ? _buildSafeHint(String(a.hint).replace(/^\[Level [ABCD]\]\s*/,'')) : '';
     reviewHtml+=`<div class="p-2 mb-2 rounded small ${a.correct?'bg-light':'bg-danger bg-opacity-10'}"><div class="fw-bold">${a.correct?'✅':'❌'} 第${i+1}題【${esc(a.node)}】Level ${a.level}</div><div class="text-muted">作答：${esc(a.selected)}　正解：${esc(a.answer)}</div>${!a.correct&&safeDetailHint?`<div class="text-warning-emphasis mt-1">💡 ${safeDetailHint}</div>`:''}</div>`;
   });
@@ -1664,9 +1627,9 @@ async function wizardCreateAndGenerate(){
 }
 
 function showGasUrlDialog(){
-  Swal.fire({title:'設定 GAS 網址',html:`<p class="text-muted small mb-2">從 Google Apps Script「部署」頁面取得網址</p><input id="swal-gas-url" class="swal2-input" value="${esc(app.gasUrl)}" placeholder="https://script.google.com/macros/s/...">`,confirmButtonText:'儲存',cancelButtonText:'取消',showCancelButton:true,
+  Swal.fire({title:'設定 GAS 網址',html:`<p class="text-muted small mb-2">從 Google Apps Script「部署」頁面取得網址<br><span class="text-info small">⚠️ 此設定僅在本次瀏覽有效，關閉或重整後恢復預設網址</span></p><input id="swal-gas-url" class="swal2-input" value="${esc(app.gasUrl)}" placeholder="https://script.google.com/macros/s/...">`,confirmButtonText:'套用',cancelButtonText:'取消',showCancelButton:true,
     preConfirm:()=>{const val=document.getElementById('swal-gas-url').value.trim();if(!val.startsWith('https://script.google.com/')){Swal.showValidationMessage('請輸入有效的 GAS 網址');return false;}return val;}
-  }).then(r=>{if(r.isConfirmed){app.gasUrl=r.value;localStorage.setItem('gasUrl',r.value);Swal.fire({icon:'success',title:'GAS 網址已儲存',timer:1200,showConfirmButton:false});loadTasksForLogin();}});
+  }).then(r=>{if(r.isConfirmed){app.gasUrl=r.value;Swal.fire({icon:'success',title:'GAS 網址已套用（本次有效）',timer:1200,showConfirmButton:false});loadTasksForLogin();}});
 }
 
 function renderMathIn(el){
