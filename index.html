@@ -330,20 +330,9 @@
                       <label class="form-label text-muted small fw-bold">AI 模型選擇</label>
                       <div class="input-group input-group-sm">
                         <select id="setting-gemini-model" class="form-select font-monospace">
-                          <optgroup label="🏆 推薦（免費配額充足）">
-                            <option value="gemma-4-31b-it">gemma-4-31b-it（推薦｜1500次/天｜強）</option>
-                          </optgroup>
-                          <optgroup label="⚡ Gemini 2.5 系列（2026 最新）">
-                            <option value="gemini-2.5-flash">gemini-2.5-flash（免費｜20次/分｜快）</option>
-                            <option value="gemini-2.5-pro">gemini-2.5-pro（付費｜最強）</option>
-                          </optgroup>
-                          <optgroup label="🔵 Gemini 2.0 系列">
-                            <option value="gemini-2.0-flash">gemini-2.0-flash（免費｜穩定）</option>
-                            <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite（免費｜最快）</option>
-                          </optgroup>
-                          <optgroup label="📦 舊版（備用）">
-                            <option value="gemini-1.5-flash">gemini-1.5-flash（備用）</option>
-                          </optgroup>
+                          <option value="gemma-4-31b-it">✅ gemma-4-31b-it（目前可用｜1500次/天）</option>
+                          <option value="gemini-2.5-flash">gemini-2.5-flash（備用）</option>
+                          <option value="gemini-2.0-flash">gemini-2.0-flash（備用）</option>
                         </select>
                         <button class="btn btn-outline-primary" onclick="saveGeminiSettings()">儲存</button>
                       </div>
@@ -447,21 +436,43 @@ const app = {
 
 const API = {
   // ── JSONP GET：以動態 <script> 繞過 GitHub Pages → GAS 的 CORS 限制 ──
+  // 若 GAS 尚未重新部署（舊版不支援 callback），自動 fallback 到直接 fetch
   _jsonp: (url) => new Promise((resolve, reject) => {
     const cbName = '_gasJSONP_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    let settled = false;
+    const done = (fn) => { if(settled) return; settled=true; fn(); };
+
     const timer = setTimeout(() => {
-      delete window[cbName]; script.remove();
-      reject(new Error('連線逾時（30秒），請確認網路或 GAS 是否正常'));
-    }, 30000);
+      done(()=>{ delete window[cbName]; script.remove();
+        reject(new Error('連線逾時（30秒），請確認網路或 GAS 是否正常')); });
+    }, 15000);
+
     window[cbName] = (data) => {
-      clearTimeout(timer); delete window[cbName]; script.remove(); resolve(data);
+      clearTimeout(timer);
+      done(()=>{ delete window[cbName]; script.remove(); resolve(data); });
     };
+
     const script = document.createElement('script');
-    script.src = url + '&callback=' + cbName;
+    // GAS 舊版不含 callback 支援時，回傳純 JSON 而非 JSONP，會觸發 onerror
+    // → fallback：用一般 fetch（此時 GAS 已重新部署才能成功）
     script.onerror = () => {
-      clearTimeout(timer); delete window[cbName]; script.remove();
-      reject(new Error('GAS 連線失敗，請確認部署網址是否正確且已設為「所有人」存取'));
+      clearTimeout(timer);
+      delete window[cbName];
+      script.remove();
+      if(settled) return;
+      // 嘗試直接 fetch（GAS 新版部署後支援 CORS）
+      const plainUrl = url.replace(/&callback=[^&]+/, '');
+      fetch(plainUrl, {redirect:'follow'})
+        .then(r => r.json())
+        .then(json => done(()=>resolve(json)))
+        .catch(() => done(()=>reject(new Error(
+          'GAS 連線失敗。
+請確認：
+① GAS 已重新部署（管理部署作業 → 建立新版本）
+② 存取設定為「所有人」'
+        ))));
     };
+    script.src = url + '&callback=' + cbName;
     document.head.appendChild(script);
   }),
 
@@ -653,7 +664,7 @@ async function loadTasksForLogin(){
   }catch(e){
     sel.innerHTML='<option value="">-- 連線失敗 --</option>';
     // ★ 修正：拿掉「無痕模式」相關提示，因為 GAS 網址已內建，不再是無痕問題
-    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線伺服器。可能原因：<br>1. 網路連線問題，請確認網路是否正常<br>2. 若有防火牆或廣告封鎖外掛，請暫停後重新整理<br>3. GAS 部署設定需確認為「所有人」可存取，並已更新 doGet 支援 JSONP</span>`;
+    msg.innerHTML=`<span class="text-danger">⚠️ 無法連線 GAS 伺服器。請依序確認：<br>① GAS 已貼上新程式碼並<b>重新部署</b>（管理部署作業→建立新版本）<br>② 部署存取設定為「<b>所有人</b>」<br>③ 網路正常且無廣告封鎖外掛</span>`;
   }
 }
 
